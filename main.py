@@ -61,9 +61,7 @@ async def handle(background_task: BackgroundTasks, file: UploadFile = File(...),
         # 保存文件
         # 重置文件指针到开头，以便可以读取文件并保存
         await file.seek(0)
-
         # 保存文件
-
         with open(file_path, "wb") as f:
             while chunk := await file.read(1024):  # 读取文件块
                 f.write(chunk)
@@ -89,11 +87,15 @@ async def download_file(task_id: str):
 
     status = result[0][3]
     if status == "success":
-        file_path = result[0][1]  # 假设 file_path 是查询结果的第三个元素
-        file_name, file_extension = os.path.splitext(file_path)  # 分离文件名和扩展名
-        md_file_path = f"{file_name}.md"  # 构造新的文件路径
+        md_file_path = result[0][2]  # 假设 file_path 是查询结果的第三个元素
+        file_path = result[0][1]  # 假设 file_path 是查询结果的第二个元素
+        filename = os.path.basename(file_path)
+        dest_name = os.path.splitext(filename)[0]  # 移除扩展名
+
+        # 拼接新的文件路径
+        new_md_file_path = os.path.join(md_file_path, f"{dest_name}.md")
         # 读取文件并转换为 base64
-        with open(md_file_path, "rb") as file:
+        with open(new_md_file_path, "rb") as file:
             file_data = file.read()
             base64_data = base64.b64encode(file_data).decode('utf-8')  # 转换为 base64 并解码为字符串
 
@@ -137,7 +139,14 @@ def consumer():
         try:
             # 处理PDF转换任务
             Pdf2MD.processPdf2MD(item)
-            dbC.update("file_task", {"status": "success"}, {"task_id": item[0]})
+            # 获取文件名并移除扩展名
+            filename = os.path.basename(item[1])
+            dest_name, extension = os.path.splitext(filename)
+
+            # 拼接完整文件路径
+            base_dir = os.path.dirname(item[1])  # 获取item[1]的目录
+            full_path = os.path.join(base_dir, dest_name, 'auto')  # 拼接完整路径
+            dbC.update("file_task", {"status": "success", "md_file_path": full_path}, {"task_id": item[0]})
         except Exception as e:
             # 处理异常
             dbC.update("file_task", {"status": "error"}, {"task_id": item[0]})
