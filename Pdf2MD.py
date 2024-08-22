@@ -20,7 +20,7 @@ def remove_extension(filename):
 def processPdf2MD(item):
 
     # 构建命令   python -m graphrag.index --init --root ./ragtest
-    cmd = ["magic-pdf", "-p",item[1], "-o", item[2]]
+    cmd = ["magic-pdf", "-p", item[1], "-o", item[2]]
     # 运行命令
     try:
         subprocess.run(cmd, capture_output=True, text=True, check=True)
