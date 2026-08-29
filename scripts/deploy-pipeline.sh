@@ -427,9 +427,44 @@ create_directories() {
 # Build / run
 # ----------------------------------------------------------------------------
 build_images() {
+    local log_file="${TMPDIR:-/tmp}/tianshu-build.$$.log"
+
+    export DOCKER_BUILDKIT=1
+    export COMPOSE_DOCKER_CLI_BUILD=1
+    # buildx attaches provenance/SBOM attestations by default, which turns the
+    # output into an OCI index. Under the containerd image store that export
+    # path is what surfaces the "parent snapshot does not exist" failure, and an
+    # internal deployment has no use for the attestations.
+    export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+
     log_info "Building images (the first build pulls ~4GB of wheels, 10-30 min)..."
-    DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 "${DC[@]}" build --parallel
-    log_success "Images built"
+    if "${DC[@]}" build --parallel 2>&1 | tee "$log_file"; then
+        rm -f "$log_file"
+        log_success "Images built"
+        return 0
+    fi
+
+    # An interrupted build can leave the snapshot chain referencing layers that
+    # are no longer there; the export then fails even though every step ran.
+    # Only drop the tags when that is what actually happened - a network failure
+    # must not cost the operator a working image.
+    if grep -qE "does not exist: not found|failed to prepare extraction snapshot" "$log_file"; then
+        log_warning "Build failed on a stale BuildKit snapshot chain, not on your code."
+        log_warning "Dropping the stale image tags and retrying (layer cache is kept)..."
+        docker rmi -f tianshu-backend:latest tianshu-frontend:latest > /dev/null 2>&1 || true
+
+        if "${DC[@]}" build --parallel 2>&1 | tee "$log_file"; then
+            rm -f "$log_file"
+            log_success "Images built after clearing the stale snapshot reference"
+            return 0
+        fi
+    fi
+
+    log_error "Image build failed. Full log kept at: ${log_file}"
+    log_error "If it still reports a missing parent snapshot, escalate in this order:"
+    log_error "  1) systemctl restart docker    # cheap, fixes most snapshotter inconsistencies"
+    log_error "  2) docker builder prune -f     # drops the layer cache: next build reinstalls deps"
+    return 1
 }
 
 start_services() {

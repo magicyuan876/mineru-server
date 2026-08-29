@@ -74,8 +74,10 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-      cache_from:
-        - tianshu-backend:latest
+      # 不使用 cache_from: tianshu-backend:latest —— 该 tag 正是本次构建的输出，
+      # 属于自引用；构建被中断过之后，导入这份缓存清单会引用到已不存在的父层，
+      # 导致导出阶段报 "parent snapshot ... does not exist"。
+      # 同机重复构建由 BuildKit 自身的层缓存覆盖，去掉它没有实际损失。
     image: tianshu-backend:latest
     container_name: tianshu-backend
     user: root
@@ -363,8 +365,7 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
-      cache_from:
-        - tianshu-frontend:latest
+      # 同 backend：不自引用 cache_from，避免悬空父层导致的导出失败
     image: tianshu-frontend:latest
     container_name: tianshu-frontend
     restart: unless-stopped
