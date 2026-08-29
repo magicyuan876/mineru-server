@@ -67,7 +67,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # 加入了日志中提示缺失的所有包
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install "huggingface-hub<1.0" \
-                "mineru[all]>=3.0.9" \
+                "mineru[core]>=3.0.9" \
                 "paddleocr[all]>=3.4.0" \
                 "paddlex>=3.4.1" \
                 "transformers==4.57.6" \
@@ -101,8 +101,19 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --break-system-packages
 
 # Step 6: [扩展] FlashAttention (必须在 torch 版本确认后最后安装)
+# 该 wheel 有 242MB 且只在 GitHub Releases 上，国内直连经常几十 KB/s 且反复断连。
+# 因此优先使用预先下载好的本地 wheel；backend/wheels/ 为空时才回退到直连下载。
+#   wget -c -t 0 --timeout=30 -O backend/wheels/flash_attn-2.8.3+cu130torch2.10-cp312-cp312-linux_x86_64.whl \
+#     https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu130torch2.10-cp312-cp312-linux_x86_64.whl
+COPY backend/wheels/ /tmp/wheels/
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu130torch2.10-cp312-cp312-linux_x86_64.whl --break-system-packages
+    if ls /tmp/wheels/flash_attn-*.whl > /dev/null 2>&1; then \
+        echo "📦 Installing FlashAttention from pre-downloaded wheel" && \
+        pip install /tmp/wheels/flash_attn-*.whl --break-system-packages; \
+    else \
+        echo "🌐 No local wheel found, downloading FlashAttention from GitHub" && \
+        pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu130torch2.10-cp312-cp312-linux_x86_64.whl --break-system-packages; \
+    fi
 
 # Step 7: [最终验证]
 RUN python -c "import torch; import flash_attn; import pypdf; import boto3; import botocore; import openai; print('✅ All Backend Dependencies Verified')" && \

@@ -18,8 +18,11 @@ thop>=0.1.1
 biopython>=1.80
 
 # 2. MinerU 3.0+ & VLM 必需依赖
-# mineru[all] 包含 pipeline/vlm/hybrid 所有后端
-mineru[all]>=3.0.9
+# mineru[core] = pipeline + vlm + gradio，涵盖 pipeline/vlm-transformers/hybrid 后端。
+# 不用 [all]：它在 Linux 上额外拉 mineru[vllm] -> vllm>=0.10.1.1，而本项目的 vLLM 是独立容器
+# （vllm/vllm-openai 镜像）经 HTTP 调用，镜像内无需该包；且每个 vllm 版本都硬绑定特定 torch，
+# 与本镜像钉死的 torch 2.10.0+cu130 冲突，会让 pip 回溯下载几十个 250MB+ 的 wheel。
+mineru[core]>=3.0.9
 # 以下为 mineru 依赖树中的关键包，显式声明以确保版本锁定
 boto3>=1.34.0
 botocore>=1.34.0
