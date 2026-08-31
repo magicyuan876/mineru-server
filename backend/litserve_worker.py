@@ -882,18 +882,26 @@ class MinerUWorkerAPI(ls.LitAPI):
 
             chunks = split_pdf_file(Path(file_path), split_dir, chunk_size, task_id)
 
+            children = []
             for chunk in chunks:
                 c_ops = options.copy()
                 c_ops["chunk_info"] = {k: chunk[k] for k in ["start_page", "end_page", "page_count"]}
-                self.task_db.create_child_task(
-                    parent_task_id=task_id,
-                    file_name=f"{Path(file_path).stem}_p{chunk['start_page']}-{chunk['end_page']}.pdf",
-                    file_path=chunk["path"],
-                    backend=task.get("backend", "auto"),
-                    options=c_ops,
-                    priority=task.get("priority", 0),
-                    user_id=task.get("user_id"),
+                children.append(
+                    {
+                        "file_name": f"{Path(file_path).stem}_p{chunk['start_page']}-{chunk['end_page']}.pdf",
+                        "file_path": chunk["path"],
+                        "options": c_ops,
+                    }
                 )
+
+            # 单事务批量创建：切片数多时避免上百个背靠背的写事务反复锁住数据库
+            self.task_db.create_child_tasks_bulk(
+                parent_task_id=task_id,
+                children=children,
+                backend=task.get("backend", "auto"),
+                priority=task.get("priority", 0),
+                user_id=task.get("user_id"),
+            )
 
             self.task_db.convert_to_parent_task(task_id, child_count=len(chunks))
             logger.info(f"✂️  Split into {len(chunks)} subtasks")

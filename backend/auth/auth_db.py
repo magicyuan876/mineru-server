@@ -48,8 +48,14 @@ class AuthDB:
         self._init_db()
 
     def _get_conn(self):
-        """获取数据库连接"""
+        """获取数据库连接
+
+        与 task_db 共用同一个数据库文件，PRAGMA 设置需保持一致（详见 task_db._get_conn）。
+        """
         conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA synchronous=NORMAL")
         conn.row_factory = sqlite3.Row
         return conn
 
