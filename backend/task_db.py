@@ -211,6 +211,50 @@ class TaskDB:
                 logger.warning(f"⚠️  Failed to enqueue to Redis, SQLite fallback active: {e}")
         return False
 
+    def sync_pending_to_redis(self) -> int:
+        """把 SQLite 里的 pending 任务补回 Redis 队列，返回补入的数量
+
+        Redis 只是加速层，SQLite 才是真相源。二者会在这些情况下发散：
+          - Redis 重启且数据卷被清空 / AOF 损坏 / key 被淘汰
+          - 入队时 Redis 短暂不可用（create 只记 warning 就继续）
+          - worker 在 BZPOPMIN 之后、SQLite 认领之前被杀
+
+        发散不会丢任务（get_next_task 找不到 Redis 任务时会回落到 SQLite 抢锁路径），
+        但那批任务从此绕开 Redis，恰好退化成我们要避免的锁竞争。这里做定期对账。
+
+        只补差集，不整体重入：enqueue 的 score 含时间戳，重复 ZADD 会刷新 score，
+        把同优先级下的 FIFO 顺序打乱。
+        """
+        if not REDIS_QUEUE_AVAILABLE:
+            return 0
+
+        redis_queue = get_redis_queue()
+        if not redis_queue:
+            return 0
+
+        queued = redis_queue.get_queued_ids()
+        if queued is None:
+            # 读不到队列时宁可不动，也好过误判成空队列后全量重入
+            return 0
+
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT task_id, priority, file_name, backend FROM tasks WHERE status = 'pending'")
+            pending = cursor.fetchall()
+
+        missing = [row for row in pending if row["task_id"] not in queued]
+
+        # pending 的任务不可能同时还被某个 worker 持有，清掉 processing 里的残留
+        redis_queue.prune_processing([row["task_id"] for row in pending])
+
+        for row in missing:
+            self._enqueue_to_redis(
+                row["task_id"], row["priority"], {"file_name": row["file_name"], "backend": row["backend"]}
+            )
+
+        if missing:
+            logger.warning(f"🔄 Re-enqueued {len(missing)} pending task(s) missing from the Redis queue")
+        return len(missing)
+
     def get_next_task(self, worker_id: str, max_retries: int = 3) -> Optional[Dict]:
         """
         获取下一个待处理任务（原子操作，防止并发冲突）
@@ -572,6 +616,17 @@ class TaskDB:
     def reset_stale_tasks(self, timeout_minutes: int = 60):
         """重置超时的 processing 任务为 pending"""
         with self.get_cursor() as cursor:
+            # 先取出待重置的行：重置后要重新入队，否则这些任务只能靠 SQLite 抢锁路径被认领
+            cursor.execute(
+                """
+                SELECT task_id, priority, file_name, backend FROM tasks
+                WHERE status = 'processing'
+                AND started_at < datetime('now', '-' || ? || ' minutes')
+            """,
+                (timeout_minutes,),
+            )
+            stale = [dict(row) for row in cursor.fetchall()]
+
             cursor.execute(
                 """
                 UPDATE tasks
@@ -584,7 +639,13 @@ class TaskDB:
                 (timeout_minutes,),
             )
             reset_count = cursor.rowcount
-            return reset_count
+
+        for row in stale:
+            self._enqueue_to_redis(
+                row["task_id"], row["priority"], {"file_name": row["file_name"], "backend": row["backend"]}
+            )
+
+        return reset_count
 
     # -------------------------------------------------------------------------
     # 新增功能：清理失败任务 (包含物理文件删除)
@@ -917,7 +978,27 @@ class TaskDB:
                 """,
                 (task_id,),
             )
-            return cursor.rowcount > 0
+            ok = cursor.rowcount > 0
+
+        if ok:
+            self._requeue_pending(task_id)
+        return ok
+
+    def _requeue_pending(self, task_id: str):
+        """把一个已经置回 pending 的任务重新放进 Redis 队列
+
+        不入队也不会丢任务（SQLite 抢锁路径兜底），但那样就绕开了 Redis，
+        正是我们要避免的锁竞争路径。在事务提交后调用。
+        """
+        if not REDIS_QUEUE_AVAILABLE:
+            return
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT task_id, priority, file_name, backend FROM tasks WHERE task_id = ?", (task_id,))
+            row = cursor.fetchone()
+        if row:
+            self._enqueue_to_redis(
+                row["task_id"], row["priority"], {"file_name": row["file_name"], "backend": row["backend"]}
+            )
 
     def pause_task(self, task_id: str) -> bool:
         """
@@ -947,7 +1028,11 @@ class TaskDB:
                 """,
                 (task_id,),
             )
-            return cursor.rowcount > 0
+            ok = cursor.rowcount > 0
+
+        if ok:
+            self._requeue_pending(task_id)
+        return ok
 
     def clear_task_cache(self, task_id: str) -> bool:
         """

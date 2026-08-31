@@ -171,6 +171,17 @@ class TaskScheduler:
                         except Exception as e:
                             logger.error(f"Failed to reset stale tasks: {e}")
 
+                    # 3.5 对账 Redis 队列与 SQLite
+                    # Redis 掉数据、入队失败、或 worker 在认领途中被杀，都会让队列少掉
+                    # 本该在的任务。它们不会丢（SQLite 抢锁路径兜底），但会绕开 Redis，
+                    # 退化成锁竞争。每轮补一次差集，无差异时无任何写操作。
+                    try:
+                        resynced = self.db.sync_pending_to_redis()
+                        if resynced:
+                            logger.warning(f"🔄 Re-enqueued {resynced} pending task(s) into the Redis queue")
+                    except Exception as e:
+                        logger.error(f"Failed to resync Redis queue: {e}")
+
                     # 4. 定期清理旧任务文件
                     cleanup_counter += 1
                     # 每24小时清理一次

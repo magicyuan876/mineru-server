@@ -21,7 +21,10 @@ services:
       - /etc/timezone:/etc/timezone:ro
     environment:
       - TZ=Asia/Shanghai
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # noeviction 而非 allkeys-lru：这是任务队列，不是缓存。LRU 会在内存吃紧时静默
+    # 驱逐队列本身，任务虽不会丢（SQLite 兜底）但会集体绕开 Redis 退化成锁竞争。
+    # noeviction 下则是 enqueue 明确报错，能被日志和对账发现。
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
     networks:
       - tianshu-network
 
