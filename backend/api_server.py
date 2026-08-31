@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote, unquote
 
+import anyio
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Depends, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
@@ -272,12 +273,14 @@ async def submit_task(
         unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
         temp_file_path = UPLOAD_DIR / unique_filename
 
-        with open(temp_file_path, "wb") as temp_file:
+        # 异步写盘：同步的 temp_file.write() 会在写入期间冻结事件循环，uvicorn 期间
+        # 不读取任何 socket —— 包括其它正在上传的连接。块大小从 8MB 降到 1MB，让出更均匀。
+        async with await anyio.open_file(temp_file_path, "wb") as temp_file:
             while True:
-                chunk = await file.read(1 << 23)
+                chunk = await file.read(1 << 20)
                 if not chunk:
                     break
-                temp_file.write(chunk)
+                await temp_file.write(chunk)
 
         options = {
             "lang": lang,
@@ -328,13 +331,17 @@ async def submit_task(
 
         options["upload_images"] = os.getenv("RUSTFS_ENABLED", "true").lower() == "true"
 
-        task_id = db.create_task(
-            file_name=file.filename,
-            file_path=str(temp_file_path),
-            backend=backend,
-            options=options,
-            priority=priority,
-            user_id=current_user.user_id,
+        # 本端点必须保持 async（要 await file.read()），因此把同步的 SQLite 写入
+        # 显式丢到线程池，避免拿不到写锁时冻结整个事件循环。
+        task_id = await anyio.to_thread.run_sync(
+            lambda: db.create_task(
+                file_name=file.filename,
+                file_path=str(temp_file_path),
+                backend=backend,
+                options=options,
+                priority=priority,
+                user_id=current_user.user_id,
+            )
         )
 
         logger.info(f"✅ Task submitted: {task_id} - {file.filename}")
@@ -354,7 +361,7 @@ async def submit_task(
 
 
 @router.get("/tasks/{task_id}", tags=["任务管理"])
-async def get_task_status(
+def get_task_status(
     task_id: str,
     upload_images: bool = Query(False, description="【已废弃】图片已自动上传到 RustFS"),
     format: str = Query("markdown", description="返回格式: markdown(默认)/json/both"),
@@ -512,7 +519,7 @@ async def get_task_status(
 
 
 @router.delete("/tasks/{task_id}", tags=["任务管理"])
-async def delete_task(task_id: str, current_user: User = Depends(get_current_active_user)):
+def delete_task(task_id: str, current_user: User = Depends(get_current_active_user)):
     """
     【重构】彻底删除任务及其本地文件
     不仅取消 pending 的任务，还会物理抹除文件和数据库记录。
@@ -550,7 +557,7 @@ async def delete_task(task_id: str, current_user: User = Depends(get_current_act
 
 
 @router.delete("/tasks/failed/clear", tags=["任务管理"])
-async def clear_failed_tasks_endpoint(current_user: User = Depends(require_permission(Permission.TASK_DELETE_ALL))):
+def clear_failed_tasks_endpoint(current_user: User = Depends(require_permission(Permission.TASK_DELETE_ALL))):
     """
     【重构】一键清理所有失败的任务，包含物理清除文件
     """
@@ -594,7 +601,7 @@ async def clear_failed_tasks_endpoint(current_user: User = Depends(require_permi
 
 
 @router.post("/tasks/{task_id}/retry", tags=["任务管理"])
-async def retry_task(task_id: str, current_user: User = Depends(get_current_active_user)):
+def retry_task(task_id: str, current_user: User = Depends(get_current_active_user)):
     """
     重试失败的任务
     """
@@ -621,7 +628,7 @@ async def retry_task(task_id: str, current_user: User = Depends(get_current_acti
 
 
 @router.post("/tasks/{task_id}/pause", tags=["任务管理"])
-async def pause_task_endpoint(task_id: str, current_user: User = Depends(get_current_active_user)):
+def pause_task_endpoint(task_id: str, current_user: User = Depends(get_current_active_user)):
     """
     暂停任务
     """
@@ -641,7 +648,7 @@ async def pause_task_endpoint(task_id: str, current_user: User = Depends(get_cur
 
 
 @router.post("/tasks/{task_id}/resume", tags=["任务管理"])
-async def resume_task_endpoint(task_id: str, current_user: User = Depends(get_current_active_user)):
+def resume_task_endpoint(task_id: str, current_user: User = Depends(get_current_active_user)):
     """
     恢复任务
     """
@@ -661,7 +668,7 @@ async def resume_task_endpoint(task_id: str, current_user: User = Depends(get_cu
 
 
 @router.post("/tasks/{task_id}/clear-cache", tags=["任务管理"])
-async def clear_task_cache_endpoint(task_id: str, current_user: User = Depends(get_current_active_user)):
+def clear_task_cache_endpoint(task_id: str, current_user: User = Depends(get_current_active_user)):
     """
     清理任务缓存：仅删除 output 文件夹
     """
@@ -687,7 +694,7 @@ async def clear_task_cache_endpoint(task_id: str, current_user: User = Depends(g
 
 
 @router.get("/queue/stats", tags=["队列管理"])
-async def get_queue_stats(current_user: User = Depends(require_permission(Permission.QUEUE_VIEW))):
+def get_queue_stats(current_user: User = Depends(require_permission(Permission.QUEUE_VIEW))):
     stats = db.get_queue_stats()
     return {
         "success": True,
@@ -699,7 +706,7 @@ async def get_queue_stats(current_user: User = Depends(require_permission(Permis
 
 
 @router.get("/queue/tasks", tags=["队列管理"])
-async def list_tasks(
+def list_tasks(
     status: Optional[str] = Query(None, description="筛选状态"),
     limit: int = Query(100, description="返回数量限制", le=1000),
     page: int = Query(1, ge=1, description="页码"),
@@ -759,7 +766,7 @@ async def list_tasks(
 
 
 @router.post("/admin/cleanup", tags=["系统管理"])
-async def cleanup_old_tasks(
+def cleanup_old_tasks(
     days: int = Query(7, description="清理N天前的任务"),
     current_user: User = Depends(require_permission(Permission.QUEUE_MANAGE)),
 ):
@@ -773,7 +780,7 @@ async def cleanup_old_tasks(
 
 
 @router.post("/admin/reset-stale", tags=["系统管理"])
-async def reset_stale_tasks(
+def reset_stale_tasks(
     timeout_minutes: int = Query(60, description="超时时间（分钟）"),
     current_user: User = Depends(require_permission(Permission.QUEUE_MANAGE)),
 ):
@@ -787,7 +794,7 @@ async def reset_stale_tasks(
 
 
 @router.get("/engines", tags=["系统信息"])
-async def list_engines():
+def list_engines():
     import importlib.util
     import importlib.metadata
     import sys
@@ -943,7 +950,7 @@ async def list_engines():
 
 
 @router.get("/health", tags=["系统信息"])
-async def health_check():
+def health_check():
     try:
         stats = db.get_queue_stats()
         return {
