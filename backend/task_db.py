@@ -836,6 +836,27 @@ class TaskDB:
             )
             return cursor.rowcount > 0
 
+    def cancel_task(self, task_id: str) -> bool:
+        """
+        取消任务：将 pending/processing/paused 状态的任务标记为 cancelled。
+        - 已取消的任务不会被打回 pending，也不会被调度器再次派发
+        - 正在处理的任务由 worker 在完成/失败时根据状态机自动跳过（completed/failed 仅对 processing 生效）
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE tasks
+                SET status = 'cancelled',
+                    started_at = NULL,
+                    completed_at = CURRENT_TIMESTAMP,
+                    worker_id = NULL
+                WHERE task_id = ?
+                AND status IN ('pending', 'processing', 'paused')
+                """,
+                (task_id,),
+            )
+            return cursor.rowcount > 0
+
     def pause_task(self, task_id: str) -> bool:
         """
         暂停任务：仅允许暂停处于 pending（排队中）的任务

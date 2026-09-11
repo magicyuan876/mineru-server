@@ -72,7 +72,7 @@ const apiTranslations: Record<string, string> = {
   '需要认证。用户只能查看自己的任务，管理员可以查看所有任务。': 'Requires authentication. Users can only view their own tasks, administrators can view all tasks.',
   '当任务完成时，会自动返回解析后的内容（data 字段）': 'When the task is completed, the parsed content will be automatically returned (data field)',
 
-  '取消任务（仅限 pending 状态）': 'Cancel Task (pending status only)',
+  '取消任务（仅限 pending/processing/paused 状态）': 'Cancel Task (pending/processing/paused status only)',
   '需要认证。用户只能取消自己的任务，管理员可以取消任何任务。': 'Requires authentication. Users can only cancel their own tasks, administrators can cancel any task.',
 
   // 队列管理
