@@ -38,11 +38,6 @@ export async function submitTask(request: SubmitTaskRequest): Promise<SubmitTask
   // 远程服务
   if (request.server_url) formData.append('server_url', request.server_url)
 
-  // Office 转换
-  if (request.convert_office_to_pdf !== undefined) {
-    formData.append('convert_office_to_pdf', String(request.convert_office_to_pdf))
-  }
-
   // MinerU 调试/输出选项
   if (request.draw_layout_bbox !== undefined) formData.append('draw_layout_bbox', String(request.draw_layout_bbox))
   if (request.draw_span_bbox !== undefined) formData.append('draw_span_bbox', String(request.draw_span_bbox))

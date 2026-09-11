@@ -79,7 +79,16 @@ async def list_tools() -> list[Tool]:
                     # 解析选项
                     "backend": {
                         "type": "string",
-                        "enum": ["pipeline", "vlm-transformers", "vlm-vllm-engine"],
+                        "enum": [
+                            "auto",
+                            "pipeline",
+                            "vlm-auto-engine",
+                            "hybrid-auto-engine",
+                            "vlm-http-client",
+                            "hybrid-http-client",
+                            "sensevoice",
+                            "video",
+                        ],
                         "description": "处理后端，默认: pipeline",
                         "default": "pipeline",
                     },

@@ -243,7 +243,7 @@ class KeyframeExtractor:
 class VideoOCREngine:
     """视频 OCR 引擎：关键帧提取 + OCR 识别"""
 
-    def __init__(self, ocr_backend: str = "paddleocr-vl", keep_keyframes: bool = False):
+    def __init__(self, ocr_backend: str = "mineru", keep_keyframes: bool = False):
         self.ocr_backend = ocr_backend
         self.keep_keyframes = keep_keyframes
         self.keyframe_extractor = KeyframeExtractor()
@@ -254,10 +254,10 @@ class VideoOCREngine:
         if self._ocr_engine is not None:
             return self._ocr_engine
 
-        if self.ocr_backend == "paddleocr-vl":
-            from paddleocr_vl import PaddleOCRVLEngine
+        if self.ocr_backend == "mineru":
+            from mineru_pipeline import MinerUPipelineEngine
 
-            self._ocr_engine = PaddleOCRVLEngine()
+            self._ocr_engine = MinerUPipelineEngine()
         else:
             raise ValueError(f"不支持的 OCR 引擎: {self.ocr_backend}")
 

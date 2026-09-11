@@ -152,7 +152,6 @@ import {
   RefreshCw,
   ChevronDown,
   FileText,
-  ScanText,
   Mic,
   Video,
   Dna,
@@ -173,12 +172,6 @@ const engineGroups = computed(() => {
       icon: FileText,
       engines: engines.document,
       style: 'bg-blue-50 text-blue-700 border-blue-200',
-    },
-    ocr: {
-      label: 'OCR',
-      icon: ScanText,
-      engines: engines.ocr,
-      style: 'bg-purple-50 text-purple-700 border-purple-200',
     },
     audio: {
       label: '音频',

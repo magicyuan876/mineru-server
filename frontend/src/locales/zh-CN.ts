@@ -190,7 +190,6 @@ export default {
 
     // Backend Group Labels
     groupMinerU: 'MinerU 文档解析',
-    groupPaddleOCR: 'PaddleOCR 识别',
     groupDocParsing: '文档解析',
     groupAudioVideo: '音频/视频处理',
     groupProfessional: '专业格式解析',
@@ -225,10 +224,6 @@ export default {
     backendHybridHttpClient: 'MinerU Hybrid Client (远程混合)',
     backendHybridHttpClientHint: '☁️ 连接远程服务器，结合本地预处理与远程推理',
 
-    backendPaddleOcrVl1509b: 'PaddleOCR-VL（多语言 OCR，109+ 语言）',
-    backendPaddleOcrVl09bHint: '🌏 PaddleOCR-VL: 自动多语言识别，支持文档方向校正、文本矫正、版面检测',
-    backendPaddleOCRVLLM: 'PaddleOCR-VL-VLLM（高性能多语言 OCR）',
-    backendPaddleOCRVLLMHint: '🚀 PaddleOCR-VL-VLLM: 基于 vLLM 的高性能多语言 OCR',
     backendSenseVoice: 'SenseVoice（语音识别，说话人识别）',
     backendSenseVoiceHint: '🎙️ SenseVoice: 支持多语言语音识别、自动说话人识别、情感识别',
     backendVideo: 'Video（视频转文字，提取音频+语音识别）',
@@ -285,8 +280,6 @@ export default {
     pageRange: '解析范围 (Page Range)',
     pageRangeHint: '留空或 -1 表示处理到文件末尾。起始页从 0 开始。',
     preprocessing: '预处理增强',
-    officeToPdf: 'Office 转 PDF 深度解析',
-    officeToPdfHint: '推荐启用。先转换为 PDF 后再解析，可完整提取 Word/PPT 中的复杂图表和排版。',
     mediaParams: '媒体处理参数',
     keepAudioFile: '保留音频轨道文件',
     enableKeyframeOCR: '启用关键帧 OCR 内容识别',
@@ -336,37 +329,7 @@ export default {
     enableKeyframeOCRHint: '📸 自动提取视频关键帧并进行 OCR 识别，适用于含有文字内容的视频（如课程、演示等）',
     enableKeyframeOCRBadge: '实验性',
     ocrEngine: 'OCR 引擎',
-    ocrEngineRecommended: 'PaddleOCR-VL（推荐，支持多语言）',
     keepKeyframes: '保留提取的关键帧图像',
-
-    // PaddleOCR-VL options
-    paddleOCREnhanced: '✨ 已启用增强功能',
-    paddleOCRFeature1: '✅ 文档方向自动分类与校正',
-    paddleOCRFeature2: '✅ 文本图像矫正（修正扭曲变形）',
-    paddleOCRFeature3: '✅ 版面区域智能检测与排序',
-    paddleOCRFeature4: '✅ 自动多语言识别（109+ 语言，无需手动指定）',
-    paddleOCRTipTitle: '💡 提示：',
-    paddleOCRTip1: 'PaddleOCR-VL 会自动检测文档语言，无需手动选择',
-    paddleOCRTip2: '支持中文、英文、日文、韩文、阿拉伯文等 109+ 种语言',
-    paddleOCRTip3: '原生支持 PDF 多页文档处理',
-    paddleOCRTip4: '仅支持 GPU 推理（要求 NVIDIA GPU）',
-
-    // === 新增：PaddleOCR 详细参数翻译 ===
-    paddleOCROptions: '🌟 PaddleOCR 专用处理选项',
-    useDocOrientationClassify: '文档方向自动分类校正',
-    useDocUnwarping: '文档图像去弯曲 (针对形变)',
-    useLayoutDetection: '启用版面分析 (Layout)',
-    useChartRecognition: '启用图表识别 (Chart)',
-    useSealRecognition: '启用印章识别 (Seal)',
-    useOcrForImageBlock: '对图像块进行 OCR 识别',
-    layoutNms: '启用版面 NMS 去重',
-    restructurePages: '重构页面逻辑排版',
-    temperature: '温度 (Temperature)',
-    topP: '采样阈值 (Top P)',
-    repetitionPenalty: '重复惩罚 (Repetition Penalty)',
-    layoutShapeMode: '版面形状模式',
-    minMaxPixels: '图像像素限制 (Min - Max)',
-    markdownIgnoreLabels: '忽略的 Markdown 标签 (逗号分隔)',
 
     // Watermark removal
     watermarkOptions: '🎨 水印去除选项',

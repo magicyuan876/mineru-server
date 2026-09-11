@@ -81,8 +81,6 @@
               </optgroup>
               <optgroup label="Visual Models">
                 <option value="vlm-auto-engine">VLM Auto</option>
-                <option value="paddleocr_vl">PaddleOCR-VL</option>
-                <option value="paddleocr-vl-vllm">PaddleOCR-VL (vLLM)</option>
               </optgroup>
               <optgroup label="Media">
                 <option value="sensevoice">SenseVoice (Audio)</option>

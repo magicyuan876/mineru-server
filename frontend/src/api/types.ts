@@ -96,8 +96,6 @@ export type Backend =
   | 'hybrid-auto-engine'// MinerU 混合高精度 (本地)
   | 'vlm-http-client'   // [新增] MinerU VLM Client (远程)
   | 'hybrid-http-client'// [新增] MinerU Hybrid Client (远程)
-  | 'paddleocr-vl'      // PaddleOCR-VL v1.5 (0.9B) - 本地推理
-  | 'paddleocr-vl-vllm' // PaddleOCR-VL v1.5 (0.9B) - vLLM 加速
   | 'sensevoice'
   | 'video'
   | 'fasta'             // FASTA 生物序列格式
@@ -156,26 +154,6 @@ export interface TaskOptions {
   force_ocr?: boolean
   draw_layout?: boolean
   draw_span?: boolean
-
-  // PaddleOCR 专属参数
-  useDocOrientationClassify?: boolean
-  useDocUnwarping?: boolean
-  useLayoutDetection?: boolean
-  useChartRecognition?: boolean
-  useSealRecognition?: boolean
-  useOcrForImageBlock?: boolean
-  mergeTables?: boolean
-  relevelTitles?: boolean
-  layoutShapeMode?: string
-  promptLabel?: string
-  repetitionPenalty?: number
-  temperature?: number
-  topP?: number
-  minPixels?: number
-  maxPixels?: number
-  layoutNms?: boolean
-  restructurePages?: boolean
-  markdownIgnoreLabels?: string[]
 }
 
 // 任务提交请求 (前端 Form 表单数据)
@@ -224,27 +202,6 @@ export interface SubmitTaskRequest {
   enable_speaker_diarization?: boolean
 
   // Office 转换参数
-  convert_office_to_pdf?: boolean
-
-  // PaddleOCR 专属参数
-  useDocOrientationClassify?: boolean
-  useDocUnwarping?: boolean
-  useLayoutDetection?: boolean
-  useChartRecognition?: boolean
-  useSealRecognition?: boolean
-  useOcrForImageBlock?: boolean
-  mergeTables?: boolean
-  relevelTitles?: boolean
-  layoutShapeMode?: string
-  promptLabel?: string
-  repetitionPenalty?: number
-  temperature?: number
-  topP?: number
-  minPixels?: number
-  maxPixels?: number
-  layoutNms?: boolean
-  restructurePages?: boolean
-  markdownIgnoreLabels?: string // ✅ 修改为 string，对应表单中的逗号分隔字符串
 }
 
 // 任务信息
@@ -365,7 +322,6 @@ export interface EnginesResponse {
   success: boolean
   engines: {
     document: EngineItem[]
-    ocr: EngineItem[]
     audio: EngineItem[]
     video: EngineItem[]
     format: EngineItem[]
