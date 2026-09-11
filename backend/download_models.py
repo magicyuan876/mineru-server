@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """
-模型预下载脚本 - Tianshu (Runtime Auto-Download for Paddle + Pre-download for others)
+模型预下载脚本 - Tianshu
 
 策略说明:
-1. MinerU / YOLO / Audio / PaddleOCR-VL 模型: 使用此脚本预先下载到 ./models 目录。
-2. 其他普通 PaddleOCR / PaddleX 模型:  设置为 auto_download。
-   - 它们将在容器运行时由引擎自动下载。
-   - 数据会持久化保存到宿主机的 ./models/paddlex_cache 和 ./models/paddleocr_cache 目录中。
-   - (通过 docker-compose.yml 的 /root/.paddlex 和 /root/.paddleocr 挂载实现)
+1. MinerU / YOLO / Audio 模型: 使用此脚本预先下载到 ./models 目录。
+2. LaMa 等运行时按需获取的模型: 设置为 auto_download，首次使用时由引擎自动下载。
 3. 配置文件生成:
    - 自动在模型目录生成 mineru.json（MinerU 3.0 新格式），供 entrypoint 脚本分发到各服务。
    - 配置文件格式: {"models-dir": {"pipeline": "...", "vlm": "..."}, "config_version": "1.3.1"}
@@ -41,77 +38,15 @@ MODELS = {
         "required": True,
     },
     "mineru_vlm": {
-        "name": "MinerU 2.5 VLM (1.2B)",
-        "model_id": "opendatalab/MinerU2.5-2509-1.2B",
+        "name": "MinerU 2.5 Pro VLM (1.2B)",
+        "model_id": "OpenDataLab/MinerU2.5-Pro-2605-1.2B",
         "source": "modelscope",
-        "target_dir": "MinerU2.5-2509-1.2B",
-        "description": "Vision Language Model (For 'vlm-auto-engine' & 'hybrid-auto-engine')",
+        "target_dir": "MinerU2.5-Pro-2605-1.2B",
+        "description": "Vision Language Model (For 'vlm-engine' & 'hybrid-engine')",
         "required": True,
     },
     # -------------------------------------------------------------------------
-    # 2. PaddleX / PaddleOCR 模型
-    # -------------------------------------------------------------------------
-    # --- 多模态文档解析 (VLM) - 强制预下载供 vLLM 服务使用 ---
-    "paddleocr_vl_1_5": {
-        "name": "PaddleOCR-VL-1.5-0.9B",
-        "repo_id": "PaddlePaddle/PaddleOCR-VL-1.5",
-        "source": "huggingface",
-        "target_dir": "paddlex_cache/official_models/PaddleOCR-VL-1.5-0.9B",
-        "description": "Pre-downloaded for vLLM Server to avoid crash loops",
-        "required": True,
-    },
-    "paddleocr_vl_0_9": {
-        "name": "PaddleOCR-VL-0.9B",
-        "repo_id": "PaddlePaddle/PaddleOCR-VL",
-        "source": "huggingface",
-        "target_dir": "paddlex_cache/official_models/PaddleOCR-VL-0.9B",
-        "description": "Pre-downloaded for vLLM Server to avoid crash loops",
-        "required": False,
-    },
-    # --- 版面分析 (Layout) - 运行时自动下载 ---
-    "pp_doclayout_v3": {
-        "name": "PP-DocLayoutV3",
-        "auto_download": True,
-        "description": "Runtime auto-download to ./models/paddlex_cache/",
-        "required": False,
-    },
-    "pp_doclayout_v2": {"name": "PP-DocLayoutV2", "auto_download": True, "required": False},
-    "pp_doclayout_plus_l": {"name": "PP-DocLayout_plus-L", "auto_download": True, "required": False},
-    "pp_docblocklayout": {"name": "PP-DocBlockLayout", "auto_download": True, "required": False},
-    # --- 文档矫正/方向分类 - 运行时自动下载 ---
-    "pp_lcnet_doc_ori": {
-        "name": "PP-LCNet_x1_0_doc_ori",
-        "auto_download": True,
-        "description": "Runtime auto-download to ./models/paddlex_cache/",
-        "required": False,
-    },
-    "pp_lcnet_textline_ori": {"name": "PP-LCNet_x1_0_textline_ori", "auto_download": True, "required": False},
-    "pp_lcnet_x0_25_textline_ori": {"name": "PP-LCNet_x0_25_textline_ori", "auto_download": True, "required": False},
-    "uvdoc": {
-        "name": "UVDoc (Doc Unwarping)",
-        "auto_download": True,
-        "description": "Runtime auto-download to ./models/paddlex_cache/",
-        "required": False,
-    },
-    # --- 通用 OCR (PP-OCRv5) - 运行时自动下载 ---
-    "pp_ocrv5_det": {"name": "PP-OCRv5_mobile_det", "auto_download": True, "required": False},
-    "pp_ocrv5_rec": {"name": "PP-OCRv5_mobile_rec", "auto_download": True, "required": False},
-    "pp_ocrv5_server_rec": {"name": "PP-OCRv5_server_rec", "auto_download": True, "required": False},
-    "pp_ocrv4_server_seal_det": {"name": "PP-OCRv4_server_seal_det", "auto_download": True, "required": False},
-    # --- 多语言 OCR - 运行时自动下载 ---
-    "eslav_pp_ocrv5_mobile_rec": {"name": "eslav_PP-OCRv5_mobile_rec", "auto_download": True, "required": False},
-    "korean_pp_ocrv5_mobile_rec": {"name": "korean_PP-OCRv5_mobile_rec", "auto_download": True, "required": False},
-    "latin_pp_ocrv5_mobile_rec": {"name": "latin_PP-OCRv5_mobile_rec", "auto_download": True, "required": False},
-    # --- 公式/表格识别 - 运行时自动下载 ---
-    "pp_formulanet": {"name": "PP-FormulaNet_plus-L", "auto_download": True, "required": False},
-    "pp_lcnet_table_cls": {"name": "PP-LCNet_x1_0_table_cls", "auto_download": True, "required": False},
-    "pp_chart2table": {"name": "PP-Chart2Table", "auto_download": True, "required": False},
-    "slanext_wired": {"name": "SLANeXt_wired", "auto_download": True, "required": False},
-    "slanet_plus": {"name": "SLANet_plus", "auto_download": True, "required": False},
-    "rtdetr_wired": {"name": "RT-DETR-L_wired_table_cell_det", "auto_download": True, "required": False},
-    "rtdetr_wireless": {"name": "RT-DETR-L_wireless_table_cell_det", "auto_download": True, "required": False},
-    # -------------------------------------------------------------------------
-    # 3. 其他模型 (需要预下载)
+    # 2. 其他模型 (需要预下载)
     # -------------------------------------------------------------------------
     "sensevoice": {
         "name": "SenseVoice Audio Recognition",
@@ -228,13 +163,7 @@ def verify_model_files(path, model_name):
             logger.warning(f"    ⚠️  No safetensors found in {path}")
             return False
 
-    # 3. PaddleOCR-VL VLM 模型验证
-    elif model_name in ["paddleocr_vl_1_5", "paddleocr_vl_0_9"]:
-        if not any(path_obj.rglob("*.safetensors")):
-            logger.warning(f"    ⚠️  No safetensors found in {path}")
-            return False
-
-    # 4. YOLO (单文件或目录)
+    # 3. YOLO (单文件或目录)
     elif model_name == "yolo11":
         if path_obj.is_file():
             if path_obj.suffix != ".pt":
@@ -295,7 +224,10 @@ def generate_mineru_json(output_dir):
 
     # 注意：这里的 paths 是容器内的绝对路径
     config = {
-        "models-dir": {"pipeline": "/app/models/PDF-Extract-Kit-1.0/models", "vlm": "/app/models/MinerU2.5-2509-1.2B"},
+        "models-dir": {
+            "pipeline": "/app/models/PDF-Extract-Kit-1.0/models",
+            "vlm": "/app/models/MinerU2.5-Pro-2605-1.2B",
+        },
         "config_version": "1.3.1",
     }
     try:
@@ -303,7 +235,7 @@ def generate_mineru_json(output_dir):
             json.dump(config, f, ensure_ascii=False, indent=4)
         logger.success(f"✅ mineru.json created at: {config_path}")
         logger.info("    -> pipeline: /app/models/PDF-Extract-Kit-1.0/models")
-        logger.info("    -> vlm:      /app/models/MinerU2.5-2509-1.2B")
+        logger.info("    -> vlm:      /app/models/MinerU2.5-Pro-2605-1.2B")
     except Exception as e:
         logger.error(f"❌ Failed to create mineru.json: {e}")
 
@@ -335,7 +267,7 @@ def main(output_dir, selected_models=None, force=False):
         logger.info(f"📦 [{name.upper()}] {config['name']}")
 
         try:
-            # 策略：自动下载模型（Paddle等）直接跳过
+            # 策略：运行时自动下载的模型直接跳过
             if config.get("auto_download"):
                 logger.info(f"    ℹ️  {name} will be auto-downloaded by runtime engine")
                 logger.info(f"        Target: {config.get('description', 'Cache directory')}")

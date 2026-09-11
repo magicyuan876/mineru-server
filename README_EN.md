@@ -44,6 +44,13 @@ English | [简体中文](./README.md)
 
 ## 📝 Latest Updates
 
+### 2026-09-11 🚀 MinerU 3.4.5 Upgrade
+
+- ✅ **MinerU 3.4.5 Upgrade**: `mineru[all]>=3.4.5`, with `mineru-vl-utils>=1.0.5,<2` and `pypdf>=5.6.0` synced
+- ✅ **VLM Model Update**: `MinerU2.5-2509-1.2B` → `MinerU2.5-Pro-2605-1.2B` (model download script, `mineru.json`, and vLLM service updated accordingly)
+- ✅ **Compatibility Confirmed**: `do_parse` API, `vlm/hybrid` backend names (legacy `*-auto-engine` aliases still supported), and pipeline model directory structure (PP-DocLayoutV2, etc.) remain unchanged
+- ✅ **Native macOS Support**: Apple Silicon auto-enables MPS acceleration (`--accelerator mps`), VLM backend runs via MLX; audio/video auxiliary engines fall back to CPU on macOS
+
 ### 2026-04-12 🔧 MinerU 3.0.9 Upgrade & Office Format Enhancement
 
 - ✅ **MinerU 3.0.9 Upgrade**
@@ -92,16 +99,13 @@ English | [简体中文](./README.md)
 ### 2025-10-30 🐳 Docker Deployment + Enterprise Authentication
 
 - ✅ **Docker Containerization Support**
-  - **One-Click Deployment**: Complete full-stack deployment with `make setup` or deployment scripts
+  - **One-Click Deployment**: Full-stack deployment via the interactive `setup.sh` script (or `make setup`)
   - **Multi-Stage Build**: Optimized image size, separated dependency and application layers
   - **GPU Support**: NVIDIA CUDA 12.6 + Container Toolkit integration
   - **Service Orchestration**: Complete orchestration of frontend, backend, Worker, MCP (docker-compose)
   - **Developer Friendly**: Hot reload, remote debugging (debugpy), real-time logs
   - **Production Ready**: Health checks, data persistence, zero-downtime deployment, resource limits
-  - **Cross-Platform Scripts**:
-    - Linux/Mac: `scripts/docker-setup.sh` or `Makefile`
-    - Windows: `scripts/docker-setup.bat`
-  - **Complete Documentation**: `scripts/DOCKER_QUICK_START.txt`, `scripts/docker-commands.sh`
+  - **Multiple Deployment Modes**: GPU standard, pipeline-only, Mac CPU local dev, offline deployment, dev hot-reload
   - See: Docker configuration files (`docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile`)
 
 - ✅ **Enterprise-Grade User Authentication & Authorization**
@@ -185,7 +189,6 @@ English | [简体中文](./README.md)
 - Support for 109+ language automatic recognition without manual specification
 - Enhanced features: document orientation, text unwarping, layout detection
 - Native PDF multi-page support with automatic model download
-- Documentation: [backend/paddleocr_vl/README.md](backend/paddleocr_vl/README.md)
 
 ---
 
@@ -193,7 +196,7 @@ English | [简体中文](./README.md)
 
 MinerU Tianshu is an **Enterprise-grade AI Data Preprocessing Platform** that converts unstructured data into AI-ready structured formats:
 
-- **📄 Documents**: PDF, Word, Excel, PPT → Markdown/JSON (MinerU, PaddleOCR-VL 109+ languages, Watermark Removal🧪)
+- **📄 Documents**: PDF, Word, Excel, PPT → Markdown/JSON (MinerU, Watermark Removal🧪)
 - **🎬 Videos**: MP4, AVI, MKV → Speech Transcription + Keyframe OCR🧪 (FFmpeg + SenseVoice)
 - **🎙️ Audio**: MP3, WAV, M4A → Transcription + Speaker Diarization (SenseVoice Multi-language)
 - **🖼️ Images**: JPG, PNG → Text Extraction + Structuring (Multiple OCR Engines + Watermark Removal🧪)
@@ -238,8 +241,8 @@ MinerU Tianshu is an **Enterprise-grade AI Data Preprocessing Platform** that co
 
 ### Supported File Formats
 
-- 📄 **Documents**: PDF, Word, Excel, PPT (MinerU, PaddleOCR-VL, MarkItDown)
-- 🖼️ **Images**: JPG, PNG, BMP, TIFF (MinerU, PaddleOCR-VL)
+- 📄 **Documents**: PDF, Word, Excel, PPT (MinerU, MarkItDown)
+- 🖼️ **Images**: JPG, PNG, BMP, TIFF (MinerU)
 - 🎙️ **Audio**: MP3, WAV, M4A, FLAC (SenseVoice multi-language, speaker diarization, emotion recognition)
 - 🎬 **Video**: MP4, AVI, MKV, MOV, WebM (audio transcription + keyframe OCR🧪)
 - 🧬 **Bio Formats**: FASTA, GenBank (sequence statistics, base analysis, GC content)
@@ -264,9 +267,8 @@ mineru-server/
 │   ├── remove_watermark/  # Watermark Removal (YOLO11x + LaMa)
 │   └── requirements.txt
 │
-├── scripts/               # Deployment Scripts
-│   ├── docker-setup.sh    # Linux/Mac Deployment
-│   └── docker-setup.bat   # Windows Deployment
+├── setup.sh               # One-click deployment script (interactive + non-interactive flags)
+├── scripts/               # Helper scripts (docker-entrypoint.sh, init-models.sh)
 │
 ├── docker-compose.yml     # Docker Orchestration
 └── Makefile               # Shortcuts
@@ -279,14 +281,36 @@ mineru-server/
 **Prerequisites**: Docker 20.10+, Docker Compose 2.0+, NVIDIA Container Toolkit (GPU optional)
 
 ```bash
-# One-click deployment
-make setup
+# One-click deployment (interactive wizard)
+bash setup.sh
 
-# Or use scripts
-./scripts/docker-setup.sh    # Linux/Mac
-scripts\docker-setup.bat     # Windows
+# Non-interactive deployment (for CI / advanced users)
+bash setup.sh --mode pipeline --yes
 
-# Common commands
+# Preview the configuration (no build, no start)
+bash setup.sh --mode gpu --dry-run
+```
+
+> Windows users: run `setup.sh` via Git Bash or WSL.
+
+`setup.sh` supports six deployment modes:
+
+| Mode | Description |
+|---|---|
+| `gpu` | GPU standard deployment (docker-compose.yml, default) |
+| `pipeline` | Pipeline-only deployment (downloads PDF-Extract-Kit models only, lighter) |
+| `cpu` | Mac CPU local development (docker-compose.cpu.yml + .env.cpu) |
+| `native` | Native host deployment (no Docker; auto MPS acceleration on Apple Silicon, VLM via MLX) |
+| `offline-build` / `offline-deploy` | Offline deployment: build the bundle online / deploy on the production host |
+| `dev` | Development mode (docker-compose.dev.yml, hot reload + debugpy) |
+
+The wizard asks for network environment (China mirrors / overseas direct), GPU count (auto-detected), worker concurrency, model source (HuggingFace/ModelScope), Redis, RustFS public URL and ports, and automatically generates the JWT secret, computes `MINERU_VIRTUAL_VRAM_SIZE`/`WORKER_MEMORY_LIMIT`, creates directories and runs health checks.
+
+> The network environment can also be set via flag: `--network cn` (China mirrors, default) or `--network global` (overseas/proxy, direct official sources). It applies to Docker image builds (apt/pip/npm) and native-mode pip installs alike.
+
+Common commands:
+
+```bash
 make start    # Start services
 make stop     # Stop services
 make logs     # View logs
@@ -383,8 +407,7 @@ npm run dev                  # http://localhost:3000
 - **Automatic Cleanup**: Periodically clean old result files, retain database records
 - **Multiple Parsing Engines**:
   - **MinerU**: Complete document parsing with table and formula recognition
-  - **PaddleOCR-VL**: Multi-language OCR (109+ languages), document enhancement processing
-  - **MarkItDown**: Office document and web page parsing
+  - **MarkItDown**: Web page and text file parsing
 - **MCP Protocol**: AI assistants can call document parsing service via standard protocol
 
 ## ⚙️ Configuration
@@ -491,7 +514,7 @@ MCP Server provides 4 tools:
 
 1. **parse_document** - Parse documents to Markdown format
    - Input methods: Base64 encoding or URL
-   - Supported formats: PDF, images, Office documents, web pages and text
+   - Supported formats: PDF, images, Office documents (DOCX/XLSX/PPTX via MinerU native), legacy Office (DOC/XLS/PPT via LibreOffice), web pages and text
    - File size: Configurable via MAX_FILE_SIZE in .env (default 500MB)
 
 2. **get_task_status** - Query task status and results
@@ -553,6 +576,28 @@ See [frontend/README.md](frontend/README.md) for details.
 
 ## 🚢 Production Deployment
 
+### Offline Deployment
+
+Tianshu supports **fully offline (air-gapped) deployment**, in two stages:
+
+```bash
+# 1. Build the offline bundle on an online machine (Linux/Mac, output in docker-images/)
+bash setup.sh --mode offline-build
+
+# 2. Transfer to the production server
+rsync -avz docker-images/ user@prod-server:/opt/tianshu/
+
+# 3. Deploy on the production server
+cd /opt/tianshu
+bash setup.sh --mode offline-deploy
+```
+
+**Highlights**:
+- ✅ **Cross-Platform Build**: Build Linux amd64 images on Mac (Apple Silicon/Intel)
+- ✅ **Fully Offline**: All models (~15GB) and dependencies pre-packaged
+- ✅ **One-Click Deploy**: Auto-configures environment variables, JWT secret, RustFS object storage
+- ✅ **Office Document Support**: MinerU natively parses .docx/.xlsx/.pptx; legacy .doc/.xls/.ppt converted via LibreOffice before parsing
+
 ### Frontend Build
 
 ```bash
@@ -596,6 +641,25 @@ Use systemd or supervisor to manage backend services:
 # Start backend
 cd backend
 python start_all.py --api-port 8000 --worker-port 9000
+```
+
+### Appendix: Common Docker Commands
+
+```bash
+# Build and start
+docker compose build --parallel        # Build all images in parallel
+docker compose up -d                   # Start all services in background
+docker compose down                    # Stop and remove containers
+
+# Status and logs
+docker compose ps                      # Show service status
+docker compose logs -f                 # Follow all logs
+docker compose logs -f backend         # Follow a single service's logs
+
+# Exec and debug
+docker compose exec backend bash       # Enter the backend container
+docker compose exec worker nvidia-smi  # Check GPU inside the container
+docker stats                           # Container resource usage
 ```
 
 ## 📚 Tech Stack
@@ -690,7 +754,6 @@ This project is built upon the following excellent open-source projects:
 **Core Engines**
 
 - [MinerU](https://github.com/opendatalab/MinerU) - PDF/Image document parsing
-- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) - Multi-language OCR engine
 - [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) - Speech recognition & speaker diarization
 - [FunASR](https://github.com/modelscope/FunASR) - Speech recognition framework
 - [MarkItDown](https://github.com/microsoft/markitdown) - Document conversion tool

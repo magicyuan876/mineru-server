@@ -10,7 +10,7 @@ Worker 主动循环拉取任务并处理
 优化日志 (2026-02-16):
 1. [并发] 强制限制 workers_per_device=1 (可通过 MAX_CONCURRENT_TASKS 调整)，防止爆显存
 2. [修复] 强制回写源 PDF 到 output 目录，解决前端无法预览源文件的问题
-3. [修复] PaddleOCR/MinerU 返回结果中补全 json_content 和 pdf_path 以支持双向定位
+3. [修复] MinerU 返回结果中补全 json_content 和 pdf_path 以支持双向定位
 4. [性能] 移除单次任务后的强制显存清理 (clean_memory)，依赖引擎的智能休眠机制
 5. [稳定] 增强 VLLM 容器互斥切换的健壮性
 """
@@ -116,8 +116,6 @@ try:
 except ImportError:
     logger.info("ℹ️  MarkItDown not available (optional)")
 
-PADDLEOCR_VL_AVAILABLE = check_dependency("paddleocr_vl", "PaddleOCR-VL")
-PADDLEOCR_VL_VLLM_AVAILABLE = check_dependency("paddleocr_vl_vllm", "PaddleOCR-VL-VLLM")
 MINERU_PIPELINE_AVAILABLE = check_dependency("mineru_pipeline", "MinerU Pipeline")
 SENSEVOICE_AVAILABLE = check_dependency("audio_engines", "SenseVoice")
 VIDEO_ENGINE_AVAILABLE = check_dependency("video_engines", "Video Engine")
@@ -207,12 +205,10 @@ class VLLMController:
 class MinerUWorkerAPI(ls.LitAPI):
     def __init__(
         self,
-        paddleocr_vl_vllm_api_list=None,
         mineru_vllm_api_list=None,
         output_dir=None,
         poll_interval=0.5,
         enable_worker_loop=True,
-        paddleocr_vl_vllm_engine_enabled=False,
     ):
         super().__init__()
 
@@ -226,8 +222,6 @@ class MinerUWorkerAPI(ls.LitAPI):
         self.enable_worker_loop = enable_worker_loop
 
         # API 配置
-        self.paddleocr_vl_vllm_engine_enabled = paddleocr_vl_vllm_engine_enabled
-        self.paddleocr_vl_vllm_api_list = paddleocr_vl_vllm_api_list or []
         self.mineru_vllm_api_list = mineru_vllm_api_list or []
 
         # 进程间共享计数器
@@ -246,12 +240,6 @@ class MinerUWorkerAPI(ls.LitAPI):
         logger.info(f"🔢 [Init] I am Global Worker #{my_global_index} (on {device})")
 
         # API 分配
-        self.paddleocr_vl_vllm_api = None
-        if self.paddleocr_vl_vllm_engine_enabled and self.paddleocr_vl_vllm_api_list:
-            assigned_api = self.paddleocr_vl_vllm_api_list[my_global_index % len(self.paddleocr_vl_vllm_api_list)]
-            self.paddleocr_vl_vllm_api = assigned_api
-            logger.info(f"🔧 Worker #{my_global_index} assigned Paddle OCR VL API: {assigned_api}")
-
         self.mineru_vllm_api = None
         if self.mineru_vllm_api_list:
             assigned_mineru_api = self.mineru_vllm_api_list[my_global_index % len(self.mineru_vllm_api_list)]
@@ -284,6 +272,12 @@ class MinerUWorkerAPI(ls.LitAPI):
         if "cuda" in str(device):
             self.accelerator = "cuda"
             self.engine_device = "cuda:0"
+        elif "mps" in str(device):
+            # Apple Silicon: MinerU 通过 MINERU_DEVICE_MODE 使用 MPS 加速；
+            # 音视频等辅助引擎（FunASR 等）对 MPS 支持不稳定，统一走 CPU
+            self.accelerator = "mps"
+            self.engine_device = "cpu"
+            os.environ.setdefault("MINERU_DEVICE_MODE", "mps")
         else:
             self.accelerator = "cpu"
             self.engine_device = "cpu"
@@ -298,6 +292,9 @@ class MinerUWorkerAPI(ls.LitAPI):
                     os.environ["MINERU_VIRTUAL_VRAM_SIZE"] = str(vram)
                 except Exception:
                     os.environ["MINERU_VIRTUAL_VRAM_SIZE"] = "8"
+            elif self.accelerator == "mps":
+                # Apple Silicon 统一内存架构，给较大阈值避免频繁 GC
+                os.environ["MINERU_VIRTUAL_VRAM_SIZE"] = "8"
             else:
                 os.environ["MINERU_VIRTUAL_VRAM_SIZE"] = "1"
 
@@ -322,8 +319,6 @@ class MinerUWorkerAPI(ls.LitAPI):
         # 引擎占位符
         self.markitdown = MarkItDown() if MARKITDOWN_AVAILABLE else None
         self.mineru_pipeline_engine = None
-        self.paddleocr_vl_engine = None
-        self.paddleocr_vl_vllm_engine = None
         self.sensevoice_engine = None
         self.video_engine = None
         self.watermark_handler = None
@@ -391,33 +386,14 @@ class MinerUWorkerAPI(ls.LitAPI):
 
         try:
             # 1. 智能服务切换
-            paddle_container = "tianshu-vllm-paddleocr"
-            mineru_container = "tianshu-vllm-mineru"
-
-            if backend == "paddleocr-vl-vllm" and self.paddleocr_vl_vllm_api:
+            if backend in ["vlm-auto-engine", "hybrid-auto-engine"] and self.mineru_vllm_api:
                 self.vllm_controller.ensure_service(
-                    target_container=paddle_container, conflict_container=mineru_container
-                )
-            elif backend in ["vlm-auto-engine", "hybrid-auto-engine"] and self.mineru_vllm_api:
-                self.vllm_controller.ensure_service(
-                    target_container=mineru_container, conflict_container=paddle_container
+                    target_container="tianshu-vllm-mineru", conflict_container="tianshu-vllm-paddleocr"
                 )
 
             file_ext = Path(file_path).suffix.lower()
 
-            # 2. 预处理
-            if file_ext in [".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt"] and options.get(
-                "convert_office_to_pdf", False
-            ):
-                try:
-                    pdf_path = self._convert_office_to_pdf(file_path)
-                    file_path = pdf_path
-                    file_ext = ".pdf"
-                    logger.info(f"✅ Office converted to PDF: {pdf_path}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Office conversion failed, falling back: {e}")
-
-            # 3. PDF 拆分
+            # 2. PDF 拆分
             if file_ext == ".pdf" and not parent_task_id:
                 if self._should_split_pdf(task_id, file_path, task, options):
                     return
@@ -443,16 +419,6 @@ class MinerUWorkerAPI(ls.LitAPI):
                     raise ValueError("Video engine not available")
                 result = self._process_video(file_path, options)
 
-            elif backend == "paddleocr-vl":
-                if not PADDLEOCR_VL_AVAILABLE:
-                    raise ValueError("PaddleOCR-VL not available")
-                result = self._process_with_paddleocr_vl(file_path, options)
-
-            elif backend == "paddleocr-vl-vllm":
-                if not PADDLEOCR_VL_VLLM_AVAILABLE:
-                    raise ValueError("PaddleOCR-VL-VLLM not available")
-                result = self._process_with_paddleocr_vl_vllm(file_path, options)
-
             elif "pipeline" in backend or "vlm-" in backend or "hybrid-" in backend:
                 if not MINERU_PIPELINE_AVAILABLE:
                     raise ValueError("MinerU Pipeline not available")
@@ -466,22 +432,21 @@ class MinerUWorkerAPI(ls.LitAPI):
                     result = self._process_audio(file_path, options)
                 elif file_ext in [".mp4", ".avi", ".mkv", ".mov"] and VIDEO_ENGINE_AVAILABLE:
                     result = self._process_video(file_path, options)
-                elif file_ext in [".pdf", ".png", ".jpg", ".jpeg", ".docx"] and MINERU_PIPELINE_AVAILABLE:
+                elif (
+                    file_ext in [".pdf", ".png", ".jpg", ".jpeg", ".docx", ".xlsx", ".pptx"]
+                    and MINERU_PIPELINE_AVAILABLE
+                ):
                     options["parse_mode"] = "pipeline"
                     result = self._process_with_mineru(file_path, options)
                 elif file_ext in [".doc", ".xls", ".ppt"]:
-                    # 旧格式先用 LibreOffice 转为对应新格式，再走已有处理链
-                    # .doc→.docx→MinerU原生  .xls→.xlsx→MarkItDown  .ppt→.pptx→MarkItDown
+                    # 旧版 Office 格式先用 LibreOffice 转为对应 OOXML 新格式，再走 MinerU 原生解析
                     try:
                         new_path = self._convert_office_to_new_format(file_path)
-                        new_ext = Path(new_path).suffix.lower()
-                        if new_ext == ".docx" and MINERU_PIPELINE_AVAILABLE:
+                        if MINERU_PIPELINE_AVAILABLE:
                             options["parse_mode"] = "pipeline"
                             result = self._process_with_mineru(new_path, options)
-                        elif self.markitdown:
-                            result = self._process_with_markitdown(new_path)
                         else:
-                            raise ValueError(f"No handler available for converted {new_ext}")
+                            raise ValueError("MinerU Pipeline not available for converted Office file")
                     except Exception as e:
                         logger.warning(f"⚠️ Old format conversion failed ({e}), falling back to MarkItDown")
                         if self.markitdown:
@@ -625,58 +590,6 @@ class MinerUWorkerAPI(ls.LitAPI):
             "markdown_file": result.get("markdown_file"),
         }
 
-    def _process_with_paddleocr_vl(self, file_path: str, options: dict) -> dict:
-        if self.accelerator == "cpu":
-            raise RuntimeError("PaddleOCR-VL requires GPU")
-
-        if self.paddleocr_vl_engine is None:
-            from paddleocr_vl import PaddleOCRVLEngine
-
-            self.paddleocr_vl_engine = PaddleOCRVLEngine(device="cuda:0", model_name="PaddleOCR-VL-1.5")
-
-        output_dir = Path(self.output_dir) / Path(file_path).stem
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        result = self.paddleocr_vl_engine.parse(file_path, output_path=str(output_dir), **options)
-
-        pdf_path = self._ensure_pdf_in_output(file_path, output_dir)
-        normalize_output(output_dir)
-
-        return {
-            "result_path": str(output_dir),
-            "content": result.get("markdown", ""),
-            "json_content": result.get("json_content"),  # 必须传递
-            "pdf_path": pdf_path,
-        }
-
-    def _process_with_paddleocr_vl_vllm(self, file_path: str, options: dict) -> dict:
-        if self.accelerator == "cpu":
-            raise RuntimeError("PaddleOCR-VL-VLLM requires GPU")
-
-        if self.paddleocr_vl_vllm_engine is None:
-            from paddleocr_vl_vllm import PaddleOCRVLVLLMEngine
-
-            self.paddleocr_vl_vllm_engine = PaddleOCRVLVLLMEngine(
-                device="cuda:0", vllm_api_base=self.paddleocr_vl_vllm_api, model_name="PaddleOCR-VL-1.5-0.9B"
-            )
-
-        output_dir = Path(self.output_dir) / Path(file_path).stem
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        result = self.paddleocr_vl_vllm_engine.parse(file_path, output_path=str(output_dir), **options)
-
-        # [修复] 复制源文件以便预览 (关键修复)
-        pdf_path = self._ensure_pdf_in_output(file_path, output_dir)
-
-        normalize_output(output_dir, handle_method="paddleocr-vl")
-
-        return {
-            "result_path": str(output_dir),
-            "content": result.get("markdown", ""),
-            "json_content": result.get("json_content"),  # 关键：支持右侧高亮
-            "pdf_path": pdf_path,  # 关键：支持左侧预览
-        }
-
     def _process_audio(self, file_path: str, options: dict) -> dict:
         if self.sensevoice_engine is None:
             from audio_engines import SenseVoiceEngine
@@ -712,7 +625,7 @@ class MinerUWorkerAPI(ls.LitAPI):
             use_itn=options.get("use_itn", True),
             keep_audio=options.get("keep_audio", False),
             enable_keyframe_ocr=options.get("enable_keyframe_ocr", False),
-            ocr_backend=options.get("ocr_backend", "paddleocr-vl"),
+            ocr_backend=options.get("ocr_backend", "mineru"),
             keep_keyframes=options.get("keep_keyframes", False),
         )
 
@@ -729,17 +642,6 @@ class MinerUWorkerAPI(ls.LitAPI):
 
         result = self.markitdown.convert(file_path)
         markdown_content = result.text_content
-
-        if Path(file_path).suffix.lower() == ".docx":
-            try:
-                from utils.docx_image_extractor import extract_images_from_docx, append_images_to_markdown
-
-                images_dir = output_dir / "images"
-                images = extract_images_from_docx(file_path, str(images_dir))
-                if images:
-                    markdown_content = append_images_to_markdown(markdown_content, images)
-            except Exception as e:
-                logger.warning(f"DOCX image extraction failed: {e}")
 
         (output_dir / f"{Path(file_path).stem}_markitdown.md").write_text(markdown_content, encoding="utf-8")
         normalize_output(output_dir)
@@ -776,31 +678,8 @@ class MinerUWorkerAPI(ls.LitAPI):
     # -------------------------------------------------------------------------
     # Utilities
     # -------------------------------------------------------------------------
-    def _convert_office_to_pdf(self, file_path: str) -> str:
-        input_file = Path(file_path)
-        final_pdf = input_file.parent / f"{input_file.stem}.pdf"
-        if final_pdf.exists():
-            final_pdf.unlink()
-
-        try:
-            with tempfile.TemporaryDirectory(prefix="libreoffice_") as temp_dir:
-                temp_path = Path(temp_dir)
-                temp_input = temp_path / input_file.name
-                shutil.copy2(input_file, temp_input)
-
-                cmd = ["libreoffice", "--headless", "--convert-to", "pdf", "--outdir", str(temp_path), str(temp_input)]
-                subprocess.run(cmd, check=True, timeout=120, capture_output=True)
-
-                temp_pdf = temp_path / f"{input_file.stem}.pdf"
-                if not temp_pdf.exists():
-                    raise RuntimeError("PDF output missing")
-                shutil.move(str(temp_pdf), str(final_pdf))
-                return str(final_pdf)
-        except Exception as e:
-            raise RuntimeError(f"Office conversion failed: {e}")
-
     def _convert_office_to_new_format(self, file_path: str) -> str:
-        """将旧版 Office 格式转换为对应的 OOXML 新格式（供 MarkItDown / MinerU 处理）。
+        """将旧版 Office 格式转换为对应的 OOXML 新格式（供 MinerU 原生解析）。
         .doc → .docx   .xls → .xlsx   .ppt → .pptx
         """
         _fmt_map = {".doc": "docx", ".xls": "xlsx", ".ppt": "pptx"}
@@ -1005,8 +884,6 @@ def start_litserve_workers(
     port=8001,
     poll_interval=0.5,
     enable_worker_loop=True,
-    paddleocr_vl_vllm_engine_enabled=False,
-    paddleocr_vl_vllm_api_list=[],
     mineru_vllm_api_list=[],
 ):
     def resolve_auto_accelerator():
@@ -1016,6 +893,13 @@ def start_litserve_workers(
             distribution("torch")
             if check_cuda_with_nvidia_smi() > 0:
                 return "cuda"
+            # Apple Silicon: 使用 MPS 加速（LitServe 原生支持 mps）
+            import platform
+
+            import torch
+
+            if torch.backends.mps.is_available() and platform.machine() in ("arm64", "arm"):
+                return "mps"
         except Exception:
             pass
         return "cpu"
@@ -1032,8 +916,6 @@ def start_litserve_workers(
         output_dir=output_dir,
         poll_interval=poll_interval,
         enable_worker_loop=enable_worker_loop,
-        paddleocr_vl_vllm_engine_enabled=paddleocr_vl_vllm_engine_enabled,
-        paddleocr_vl_vllm_api_list=paddleocr_vl_vllm_api_list,
         mineru_vllm_api_list=mineru_vllm_api_list,
     )
 
@@ -1068,8 +950,6 @@ if __name__ == "__main__":
     parser.add_argument("--devices", type=str, default="auto")
     parser.add_argument("--poll-interval", type=float, default=0.5)
     parser.add_argument("--disable-worker-loop", action="store_true")
-    parser.add_argument("--paddleocr-vl-vllm-engine-enabled", action="store_true")
-    parser.add_argument("--paddleocr-vl-vllm-api-list", type=parse_list_arg, default=[])
     parser.add_argument("--mineru-vllm-api-list", type=parse_list_arg, default=[])
     args = parser.parse_args()
 
@@ -1099,7 +979,5 @@ if __name__ == "__main__":
         port=port,
         poll_interval=args.poll_interval,
         enable_worker_loop=not args.disable_worker_loop,
-        paddleocr_vl_vllm_engine_enabled=args.paddleocr_vl_vllm_engine_enabled,
-        paddleocr_vl_vllm_api_list=args.paddleocr_vl_vllm_api_list,
         mineru_vllm_api_list=args.mineru_vllm_api_list,
     )

@@ -217,7 +217,7 @@ async def submit_task(
     file: UploadFile = File(..., description="文件: PDF/图片/Office/HTML/音频/视频等多种格式"),
     backend: str = Form(
         "auto",
-        description="处理后端: pipeline, hybrid-auto-engine, vlm-auto-engine, hybrid-http-client, vlm-http-client, paddleocr-vl, etc.",
+        description="处理后端: pipeline, hybrid-auto-engine, vlm-auto-engine, hybrid-http-client, vlm-http-client, sensevoice, video, etc.",
     ),
     lang: str = Form("auto", description="语言: ch/en/auto..."),
     method: str = Form("auto", description="解析方法: auto/txt/ocr"),
@@ -239,33 +239,12 @@ async def submit_task(
     draw_span: bool = Form(True, description="[兼容旧版] 是否绘制文本Span边框"),
     keep_audio: bool = Form(False, description="视频处理时是否保留提取的音频文件"),
     enable_keyframe_ocr: bool = Form(False, description="是否启用视频关键帧OCR识别（实验性功能）"),
-    ocr_backend: str = Form("paddleocr-vl", description="关键帧OCR引擎: paddleocr-vl"),
+    ocr_backend: str = Form("mineru", description="关键帧OCR引擎: mineru"),
     keep_keyframes: bool = Form(False, description="是否保留提取的关键帧图像"),
     enable_speaker_diarization: bool = Form(False, description="是否启用说话人分离"),
     remove_watermark: bool = Form(False, description="是否启用水印去除"),
     watermark_conf_threshold: float = Form(0.35, description="水印检测置信度阈值"),
     watermark_dilation: int = Form(10, description="水印掩码膨胀大小"),
-    convert_office_to_pdf: bool = Form(False, description="是否将 Office 文件转换为 PDF 后再处理"),
-    useDocOrientationClassify: bool = Form(False, description="文档方向分类"),
-    useDocUnwarping: bool = Form(False, description="文档去弯曲"),
-    useLayoutDetection: bool = Form(True, description="是否启用版面分析"),
-    useChartRecognition: bool = Form(False, description="是否启用图表识别"),
-    useSealRecognition: bool = Form(True, description="是否启用印章识别"),
-    useOcrForImageBlock: bool = Form(False, description="是否对图像块进行OCR"),
-    mergeTables: bool = Form(True, description="是否合并表格"),
-    relevelTitles: bool = Form(True, description="是否重构标题层级"),
-    layoutShapeMode: str = Form("auto", description="版面形状模式"),
-    promptLabel: str = Form("ocr", description="提示词标签"),
-    repetitionPenalty: float = Form(1.0, description="重复惩罚"),
-    temperature: float = Form(0.0, description="温度"),
-    topP: float = Form(1.0, description="Top P"),
-    minPixels: int = Form(147384, description="最小像素"),
-    maxPixels: int = Form(2822400, description="最大像素"),
-    layoutNms: bool = Form(True, description="是否启用版面 NMS"),
-    restructurePages: bool = Form(True, description="是否重构页面"),
-    markdownIgnoreLabels: str = Form(
-        "header,header_image,footer,footer_image,number,footnote,aside_text", description="忽略的标签 (逗号分隔)"
-    ),
     current_user: User = Depends(require_permission(Permission.TASK_SUBMIT)),
 ):
     try:
@@ -305,25 +284,6 @@ async def submit_task(
             "remove_watermark": remove_watermark,
             "watermark_conf_threshold": watermark_conf_threshold,
             "watermark_dilation": watermark_dilation,
-            "convert_office_to_pdf": convert_office_to_pdf,
-            "useDocOrientationClassify": useDocOrientationClassify,
-            "useDocUnwarping": useDocUnwarping,
-            "useLayoutDetection": useLayoutDetection,
-            "useChartRecognition": useChartRecognition,
-            "useSealRecognition": useSealRecognition,
-            "useOcrForImageBlock": useOcrForImageBlock,
-            "mergeTables": mergeTables,
-            "relevelTitles": relevelTitles,
-            "layoutShapeMode": layoutShapeMode,
-            "promptLabel": promptLabel,
-            "repetitionPenalty": repetitionPenalty,
-            "temperature": temperature,
-            "topP": topP,
-            "minPixels": minPixels,
-            "maxPixels": maxPixels,
-            "layoutNms": layoutNms,
-            "restructurePages": restructurePages,
-            "markdownIgnoreLabels": [label.strip() for label in markdownIgnoreLabels.split(",") if label.strip()],
         }
 
         options["upload_images"] = os.getenv("RUSTFS_ENABLED", "true").lower() == "true"
@@ -433,8 +393,7 @@ async def get_task_status(
             json_files = [
                 f
                 for f in result_dir.rglob("*.json")
-                if not f.parent.name.startswith("page_")
-                and (f.name in ["content.json", "result.json"] or "_content_list.json" in f.name)
+                if f.name in ["content.json", "result.json"] or "_content_list.json" in f.name
             ]
 
             if md_files or json_files:
@@ -453,11 +412,8 @@ async def get_task_status(
                             if "_span.pdf" in pdf.name:
                                 preview_pdf = pdf
                                 break
-                    if not preview_pdf:
-                        for pdf in pdf_files:
-                            if not pdf.name.startswith("page_"):
-                                preview_pdf = pdf
-                                break
+                    if not preview_pdf and pdf_files:
+                        preview_pdf = pdf_files[0]
 
                     if preview_pdf:
                         try:
@@ -820,8 +776,6 @@ async def list_engines():
         "gpu_memory_gb": gpu_memory_gb,
         "packages": {
             "mineru": _pkg_version("mineru"),
-            "paddleocr": _pkg_version("paddleocr"),
-            "paddlepaddle-gpu": _pkg_version("paddlepaddle-gpu"),
             "torch": _pkg_version("torch"),
             "transformers": _pkg_version("transformers"),
             "litserve": _pkg_version("litserve"),
@@ -830,7 +784,6 @@ async def list_engines():
 
     # ── 引擎列表 ──────────────────────────────────────────────
     mineru_ver = system_info["packages"]["mineru"]
-    paddleocr_ver = system_info["packages"]["paddleocr"]
 
     engines = {
         "document": [
@@ -839,21 +792,21 @@ async def list_engines():
                 "display_name": "Standard Pipeline",
                 "version": mineru_ver,
                 "description": "基于 PDF-Extract-Kit 的传统多模型管道，速度快，无幻觉，适合大多数文档。",
-                "supported_formats": [".pdf", ".png", ".jpg", ".jpeg", ".docx"],
+                "supported_formats": [".pdf", ".png", ".jpg", ".jpeg", ".docx", ".xlsx", ".pptx"],
             },
             {
                 "name": "vlm-auto-engine",
                 "display_name": "MinerU VLM (视觉大模型)",
                 "version": mineru_ver,
-                "description": "基于 MinerU 3.X (1.2B) 视觉模型，擅长处理复杂排版、图表和非标准文档。DOCX 文件将使用原生解析。",
-                "supported_formats": [".pdf", ".png", ".jpg", ".jpeg", ".docx"],
+                "description": "基于 MinerU 3.X (1.2B) 视觉模型，擅长处理复杂排版、图表和非标准文档。Office 文件将使用原生解析。",
+                "supported_formats": [".pdf", ".png", ".jpg", ".jpeg", ".docx", ".xlsx", ".pptx"],
             },
             {
                 "name": "hybrid-auto-engine",
                 "display_name": "Hybrid High-Precision (高精度混合)",
                 "version": mineru_ver,
-                "description": "结合 Pipeline 的稳定性与 VLM 的理解能力，提供最高精度的解析效果。DOCX 文件将使用原生解析。",
-                "supported_formats": [".pdf", ".png", ".jpg", ".jpeg", ".docx"],
+                "description": "结合 Pipeline 的稳定性与 VLM 的理解能力，提供最高精度的解析效果。Office 文件将使用原生解析。",
+                "supported_formats": [".pdf", ".png", ".jpg", ".jpeg", ".docx", ".xlsx", ".pptx"],
             },
         ],
         "ocr": [],
@@ -865,38 +818,18 @@ async def list_engines():
                 "name": "MarkItDown (快速)",
                 "value": "auto",
                 "version": _pkg_version("markitdown"),
-                "description": "Office 文档和文本文件转换引擎（快速但图片提取可能不完整）",
-                "supported_formats": [".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt", ".html", ".txt", ".csv"],
+                "description": "轻量文本和 HTML/CSV 文件转换引擎",
+                "supported_formats": [".html", ".txt", ".csv"],
             },
             {
-                "name": "LibreOffice + MinerU (完整)",
+                "name": "LibreOffice 转换器（旧版 Office）",
                 "value": "auto",
                 "version": mineru_ver,
-                "description": "将 Office 文件转为 PDF 后使用 MinerU 处理（慢但图片提取完整）",
-                "supported_formats": [".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt"],
+                "description": "将旧版 .doc/.xls/.ppt 转换为新版格式后由 MinerU 原生解析",
+                "supported_formats": [".doc", ".xls", ".ppt"],
             },
         ],
     }
-
-    if importlib.util.find_spec("paddleocr_vl") is not None:
-        engines["ocr"].append(
-            {
-                "name": "paddleocr_vl",
-                "display_name": "PaddleOCR-VL v1.5 (0.9B)",
-                "version": paddleocr_ver,
-                "supported_formats": [".pdf", ".png", ".jpg", ".jpeg"],
-            }
-        )
-
-    if importlib.util.find_spec("paddleocr_vl_vllm") is not None:
-        engines["ocr"].append(
-            {
-                "name": "paddleocr-vl-vllm",
-                "display_name": "PaddleOCR-VL v1.5 (0.9B) (vLLM)",
-                "version": paddleocr_ver,
-                "supported_formats": [".pdf", ".png", ".jpg", ".jpeg"],
-            }
-        )
 
     if importlib.util.find_spec("audio_engines") is not None:
         engines["audio"].append(

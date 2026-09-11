@@ -11,7 +11,7 @@ def convert_pdf_to_images(pdf_path: Path, output_dir: Path, zoom: float = 2.0, d
     """
     将 PDF 所有页转换为图片
 
-    这是一个公用的工具函数，被 PaddleOCR-VL 等引擎共同使用。
+    这是一个公用的工具函数，被各解析引擎共同使用。
 
     Args:
         pdf_path: PDF 文件路径

@@ -15,17 +15,20 @@ Code comments, logs and docs are predominantly Simplified Chinese — match that
 ### Docker (primary deployment path)
 
 ```bash
-make setup           # first-time: copy .env, create dirs, build, start
+make setup           # first-time: runs setup.sh (interactive deployment wizard)
 make build | start | stop | restart | status | logs
 make logs-worker     # per-service logs (also logs-backend, logs-frontend)
 make shell-worker    # exec into a container
-make test-gpu        # verify torch/paddle CUDA inside the worker
+make test-gpu        # verify torch CUDA inside the worker
 make validate        # docker compose config
 make dev             # docker-compose.dev.yml (hot reload + debugpy)
 ```
 
 `make` reads `REDIS_QUEUE_ENABLED` from the root `.env` and adds `--profile redis` when true.
-Offline/air-gapped builds: `scripts/build-offline.sh`, then `deploy-offline.sh` (or `deploy-offline-cpu.sh`).
+`setup.sh` (repo root) is the single deployment entry: `bash setup.sh` (interactive), or
+`bash setup.sh --mode <gpu|pipeline|cpu|offline-build|offline-deploy|dev> [--gpus N] [--concurrency N] [--yes] [--dry-run]`.
+Offline/air-gapped: `--mode offline-build` on a connected machine (bundle in `docker-images/`), then
+`--mode offline-deploy` on the target. Mac CPU local dev: `--mode cpu`.
 
 ### Local backend
 
@@ -96,31 +99,29 @@ editing `CREATE TABLE` alone — existing deployments would not pick it up.
 
 ### Engine routing (`litserve_worker.py::_process_task`)
 
-Per-task pipeline: vLLM container switch → Office conversion → PDF split → watermark removal →
+Per-task pipeline: vLLM container switch → legacy Office conversion → PDF split → watermark removal →
 engine dispatch → normalize → persist.
 
 Dispatch is keyed on the task's `backend` string:
 
 - `sensevoice` → audio engine; `video` → video engine
-- `paddleocr-vl`, `paddleocr-vl-vllm` → PaddleOCR-VL
 - anything containing `pipeline` / `vlm-` / `hybrid-` → MinerU (`options["parse_mode"] = backend`)
-- `auto` → sniffed by extension: format engines → audio → video → MinerU → LibreOffice conversion for
-  legacy `.doc/.xls/.ppt` → MarkItDown fallback
+- `auto` → sniffed by extension: format engines → audio → video → MinerU (PDF/images/DOCX/XLSX/PPTX) → LibreOffice conversion for
+  legacy `.doc/.xls/.ppt` → MarkItDown fallback (HTML/TXT/CSV)
 - otherwise → looked up in `FormatEngineRegistry`
 
 Every engine is imported behind a try/except with an `X_AVAILABLE` flag, so a missing optional dependency
 degrades that one backend instead of killing the worker. Preserve that pattern when adding engines.
 
 `VLLMController.ensure_service()` enforces **mutual exclusion between vLLM containers**
-(`tianshu-vllm-paddleocr` vs `tianshu-vllm-mineru`) by stopping the conflicting one to free VRAM — the
+(`tianshu-vllm-mineru`) by stopping the conflicting one to free VRAM — the
 worker talks to the Docker socket to do this.
 
 ### Output contract
 
 Every engine's raw output directory goes through `output_normalizer.normalize_output(dir, handle_method)`,
 which standardizes to `result.md` / `result.json` / `images/`, then uploads images to RustFS (S3-compatible,
-`storage/rustfs_client.py`) and rewrites image paths to public URLs. `PaddleOCROutputNormalizer` is chosen
-by `handle_method="paddleocr-vl"` or auto-detected from `page_*` subdirectories.
+`storage/rustfs_client.py`) and rewrites image paths to public URLs.
 
 The worker then writes a JSON blob into the `tasks.data` column with keys the frontend depends on:
 `pdf_path` (left-hand PDF preview), `json_content` (right-hand layout/bbox rendering), `markdown`,

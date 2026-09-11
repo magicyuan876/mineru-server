@@ -46,6 +46,13 @@
 
 ## 📝 最新更新
 
+### 2026-09-11 🚀 MinerU 3.4.5 升级
+
+- ✅ **MinerU 3.4.5 升级**：`mineru[all]>=3.4.5`，同步 `mineru-vl-utils>=1.0.5,<2`、`pypdf>=5.6.0`
+- ✅ **VLM 模型更新**：`MinerU2.5-2509-1.2B` → `MinerU2.5-Pro-2605-1.2B`（模型下载脚本、`mineru.json`、vLLM 服务同步）
+- ✅ **兼容确认**：`do_parse` API、`vlm/hybrid` 后端名（旧别名 `*-auto-engine` 仍受支持）、pipeline 模型目录结构（PP-DocLayoutV2 等）均保持不变
+- ✅ **macOS 原生支持**：Apple Silicon 自动启用 MPS 加速（`--accelerator mps`），VLM 后端自动走 MLX；音视频辅助引擎在 mac 上回退 CPU
+
 ### 2026-04-12 🔧 MinerU 3.0.9 升级 & Office 格式增强
 
 - ✅ **MinerU 3.0.9 升级**
@@ -94,16 +101,13 @@
 ### 2025-10-30 🐳 Docker 部署 + 企业级认证系统
 
 - ✅ **Docker 容器化部署支持**
-  - **一键部署**：`make setup` 或运行部署脚本即可完成全栈部署
+  - **一键部署**：根目录交互式脚本 `setup.sh`（或 `make setup`）即可完成全栈部署
   - **多阶段构建**：优化镜像体积，分离依赖层和应用层
   - **GPU 支持**：NVIDIA CUDA 12.6 + Container Toolkit 集成
   - **服务编排**：前端、后端、Worker、MCP 完整编排（docker-compose）
   - **开发友好**：支持热重载、远程调试（debugpy）、实时日志
   - **生产就绪**：健康检查、数据持久化、零停机部署、资源限制
-  - **跨平台脚本**：
-    - Linux/Mac: `scripts/docker-setup.sh` 或 `Makefile`
-    - Windows: `scripts/docker-setup.bat`
-  - **完整文档**：`scripts/DOCKER_QUICK_START.txt`、`scripts/docker-commands.sh`
+  - **多种部署模式**：GPU 标准、纯 pipeline、Mac CPU 本地开发、离线部署、开发热重载
   - 详见：Docker 配置文件（`docker-compose.yml`、`backend/Dockerfile`、`frontend/Dockerfile`）
 
 - ✅ **企业级用户认证与授权系统**
@@ -186,7 +190,6 @@
 - 支持 109+ 语言自动识别，无需手动指定语言
 - 文档方向分类、文本图像矫正、版面区域检测等增强功能
 - 原生 PDF 多页文档支持，模型自动下载管理
-- 详细文档：[backend/paddleocr_vl/README.md](backend/paddleocr_vl/README.md)
 
 ---
 
@@ -194,7 +197,7 @@
 
 MinerU Tianshu（天枢）是一个**企业级 AI 数据预处理平台**，将非结构化数据转换为 AI 可用的结构化格式：
 
-- **📄 文档**: PDF、Word、Excel、PPT → Markdown/JSON（MinerU、PaddleOCR-VL 109+ 语言、水印去除🧪）
+- **📄 文档**: PDF、Word、Excel、PPT → Markdown/JSON（MinerU、水印去除🧪）
 - **🎬 视频**: MP4、AVI、MKV → 语音转写 + 关键帧 OCR🧪（FFmpeg + SenseVoice）
 - **🎙️ 音频**: MP3、WAV、M4A → 文字转写 + 说话人识别（SenseVoice 多语言）
 - **🖼️ 图片**: JPG、PNG → 文字提取 + 结构化（多 OCR 引擎 + 水印去除🧪）
@@ -239,8 +242,8 @@ MinerU Tianshu（天枢）是一个**企业级 AI 数据预处理平台**，将�
 
 ### 支持的文件格式
 
-- 📄 **文档**: PDF、Word、Excel、PPT（MinerU、PaddleOCR-VL、MarkItDown）
-- 🖼️ **图片**: JPG、PNG、BMP、TIFF（MinerU、PaddleOCR-VL）
+- 📄 **文档**: PDF、Word、Excel、PPT（MinerU、MarkItDown）
+- 🖼️ **图片**: JPG、PNG、BMP、TIFF（MinerU）
 - 🎙️ **音频**: MP3、WAV、M4A、FLAC（SenseVoice 多语言、说话人识别、情感识别）
 - 🎬 **视频**: MP4、AVI、MKV、MOV、WebM（音频转写 + 关键帧 OCR🧪）
 - 🧬 **生物格式**: FASTA、GenBank（序列统计、碱基分析、GC 含量）
@@ -265,9 +268,8 @@ mineru-server/
 │   ├── remove_watermark/  # 水印去除（YOLO11x + LaMa）
 │   └── requirements.txt
 │
-├── scripts/               # 部署脚本
-│   ├── docker-setup.sh    # Linux/Mac 部署
-│   └── docker-setup.bat   # Windows 部署
+├── setup.sh               # 一键部署脚本（交互式引导 + 非交互参数）
+├── scripts/               # 辅助脚本（docker-entrypoint.sh、init-models.sh）
 │
 ├── docker-compose.yml     # Docker 编排配置
 └── Makefile               # 快捷命令
@@ -280,14 +282,36 @@ mineru-server/
 **前置要求**：Docker 20.10+、Docker Compose 2.0+、NVIDIA Container Toolkit（GPU 可选）
 
 ```bash
-# 一键部署
-make setup
+# 一键部署（交互式引导）
+bash setup.sh
 
-# 或使用脚本
-./scripts/docker-setup.sh    # Linux/Mac
-scripts\docker-setup.bat     # Windows
+# 跳过提问直接部署（非交互，适合 CI/熟手）
+bash setup.sh --mode pipeline --yes
 
-# 常用命令
+# 预览将要执行的配置（不构建、不启动）
+bash setup.sh --mode gpu --dry-run
+```
+
+> Windows 用户请使用 Git Bash 或 WSL 运行 `setup.sh`。
+
+`setup.sh` 支持六种部署模式：
+
+| 模式 | 说明 |
+|---|---|
+| `gpu` | GPU 标准部署（docker-compose.yml，默认） |
+| `pipeline` | 纯 pipeline 部署（只下载 PDF-Extract-Kit 模型，更轻量） |
+| `cpu` | Mac CPU 本地开发（docker-compose.cpu.yml + .env.cpu） |
+| `native` | 本机原生部署（不用 Docker，Apple Silicon 自动 MPS 加速，VLM 走 MLX） |
+| `offline-build` / `offline-deploy` | 离线部署：联网机构建离线包 / 生产机离线部署 |
+| `dev` | 开发模式（docker-compose.dev.yml，热重载 + debugpy） |
+
+交互过程会询问网络环境（国内镜像加速 / 海外官方源直连）、GPU 数量（自动检测）、Worker 并发数、模型源（HuggingFace/ModelScope）、Redis、RustFS 公网地址和端口，并自动完成 JWT 密钥生成、`MINERU_VIRTUAL_VRAM_SIZE`/`WORKER_MEMORY_LIMIT` 计算、目录创建和健康检查。
+
+> 网络环境也可用参数指定：`--network cn`（国内镜像加速，默认）或 `--network global`（海外/代理，官方源直连）。该选择同时作用于 Docker 镜像构建（apt/pip/npm 源）与原生部署的 pip 安装。
+
+常用命令：
+
+```bash
 make start    # 启动服务
 make stop     # 停止服务
 make logs     # 查看日志
@@ -343,14 +367,13 @@ npm run dev                  # http://localhost:3000
 - **pipeline**: MinerU 标准流程，通用文档解析
 - **vlm-transformers/vlm-vllm-engine**: MinerU VLM 模式
 <!-- - **deepseek-ocr**: DeepSeek OCR，高精度需求 -->
-- **paddleocr-vl**: 109+ 语言，自动方向矫正
 
 ## 🎯 核心特性
 
 - **Worker 主动拉取**: 0.5秒响应，无需调度器触发
 - **GPU 负载均衡**: LitServe 自动调度，避免显存冲突，多 GPU 隔离
 - **并发安全**: 原子操作防止任务重复，支持多 Worker 并发
-- **多解析引擎**: MinerU、PaddleOCR-VL、MarkItDown、格式引擎
+- **多解析引擎**: MinerU、MarkItDown、格式引擎
 - **自动清理**: 定期清理旧文件，保留数据库记录
 - **现代化 UI**: TailwindCSS 美观界面，响应式设计，实时更新
 
@@ -413,66 +436,41 @@ python start_all.py --enable-mcp  # MCP Server 端口 8002（默认）
 
 ## 🚢 生产部署
 
-### 离线部署（推荐）
+### 离线部署
 
-Tianshu 支持**完全离线部署**，提供两种部署模式：
-
-#### 方式 1：统一版（GPU 自动降级 CPU）
-
-适用于 Linux 服务器（有 GPU 则加速，无 GPU 自动降级 CPU）：
+Tianshu 支持**完全离线部署**，分为联网机构建、生产机部署两个阶段：
 
 ```bash
-# 1. 在联网环境构建镜像（Linux/Mac 均可）
-./scripts/build-offline.sh
+# 1. 在联网环境构建离线包（Linux/Mac 均可，产物在 docker-images/）
+bash setup.sh --mode offline-build
 
 # 2. 传输到生产服务器
 rsync -avz docker-images/ user@prod-server:/opt/tianshu/
 
-# 3. 在生产服务器部署（自动检测 GPU/CPU）
+# 3. 在生产服务器部署
 cd /opt/tianshu
-./deploy-offline.sh
-```
-
-#### 方式 2：CPU 专用版（Mac/无 GPU 环境）
-
-适用于 Mac（Apple Silicon/Intel）和无 GPU 的 Linux 环境：
-
-```bash
-# 1. 在联网环境构建镜像
-./scripts/build-offline.sh
-
-# 2. 传输构建产物（可选：直接在目标机器构建可跳过此步）
-rsync -avz docker-images/ user@target:/opt/tianshu/
-
-# 3. 在目标机器部署（强制 CPU 模式）
-cd /opt/tianshu
-./deploy-offline-cpu.sh
+bash setup.sh --mode offline-deploy
 ```
 
 **特点**：
-- ✅ **统一镜像**：自动检测 GPU，有则加速，无则 CPU 降级
 - ✅ **跨平台构建**：支持在 Mac（Apple Silicon/Intel）构建 Linux amd64 镜像
 - ✅ **完全离线**：所有模型（~15GB）和依赖预先打包
 - ✅ **一键部署**：自动配置环境变量、JWT 密钥、RustFS 对象存储
-- ✅ **Office 文档支持**：自动转换 .doc/.docx/.pptx 等格式为 PDF 后处理
+- ✅ **Office 文档支持**：MinerU 原生解析 .docx/.xlsx/.pptx，旧版 .doc/.xls/.ppt 经 LibreOffice 转换后解析
 
 **关键修复**：
-- 🔧 Worker uploads 目录读写权限（支持 Office 转 PDF）
+- 🔧 Worker uploads 目录读写权限
 - 🔧 albumentations/albucore 版本锁定（解决 MinerU 公式识别依赖）
 - 🔧 RustFS 镜像平台指定（确保 amd64 架构一致性）
 
-📖 **详细说明**：[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
-
 ### 在线 Docker 部署
 
-推荐使用 Docker Compose 一键部署：
-
 ```bash
-# 一键部署
-docker compose up -d
+# 交互式引导部署（推荐）
+bash setup.sh
 
-# 或使用 Make 命令
-make setup
+# 或直接启动（需已配置 .env）
+docker compose up -d
 ```
 
 ### 手动部署
@@ -493,11 +491,30 @@ server {
 
 **后端部署**：`cd backend && python start_all.py --api-port 8000 --worker-port 9000`
 
+### 附录：常用 Docker 命令速查
+
+```bash
+# 构建与启动
+docker compose build --parallel        # 并行构建全部镜像
+docker compose up -d                   # 后台启动全部服务
+docker compose down                    # 停止并移除容器
+
+# 状态与日志
+docker compose ps                      # 查看服务状态
+docker compose logs -f                 # 跟踪全部日志
+docker compose logs -f backend         # 跟踪单服务日志
+
+# 进入容器与调试
+docker compose exec backend bash       # 进入后端容器
+docker compose exec worker nvidia-smi  # 检查容器内 GPU
+docker stats                           # 查看容器资源占用
+```
+
 ## 📚 技术栈
 
 **前端**：Vue 3、TypeScript、Vite、TailwindCSS、Pinia、Vue Router
 
-**后端**：FastAPI、LitServe、MinerU、PaddleOCR、SenseVoice、SQLite、Loguru
+**后端**：FastAPI、LitServe、MinerU、SenseVoice、SQLite、Loguru
 
 ## 🔧 故障排查
 
@@ -527,7 +544,6 @@ server {
 **核心引擎**
 
 - [MinerU](https://github.com/opendatalab/MinerU) - PDF/图片文档解析
-- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) - 多语言 OCR 引擎
 - [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) - 语音识别与说话人识别
 - [FunASR](https://github.com/modelscope/FunASR) - 语音识别框架
 - [MarkItDown](https://github.com/microsoft/markitdown) - 文档转换工具
