@@ -593,7 +593,9 @@ async def cancel_task_endpoint(task_id: str, current_user: User = Depends(get_cu
     if db.cancel_task(task_id):
         return {"success": True, "message": "Task cancelled"}
 
-    raise HTTPException(status_code=409, detail="Task cannot be cancelled (must be in pending/processing/paused status)")
+    raise HTTPException(
+        status_code=409, detail="Task cannot be cancelled (must be in pending/processing/paused status)"
+    )
 
 
 @router.post("/tasks/{task_id}/pause", tags=["任务管理"])
