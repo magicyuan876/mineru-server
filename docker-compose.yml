@@ -56,8 +56,6 @@ services:
     entrypoint: ["python", "download_models.py", "--output", "/app/models"]
     volumes:
       - ./models:/app/models:rw
-      - ./models/paddlex_cache:/root/.paddlex:rw
-      - ./models/paddleocr_cache:/root/.paddleocr:rw
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     environment:
@@ -74,6 +72,9 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
+        PIP_MIRROR: ${PIP_MIRROR:-https://mirrors.aliyun.com/pypi/simple/}
       cache_from:
         - tianshu-backend:latest
     image: tianshu-backend:latest
@@ -85,8 +86,6 @@ services:
     volumes:
       - ./backend:/app/backend:rw
       - ./models:/app/models:rw
-      - ./models/paddlex_cache:/root/.paddlex:rw
-      - ./models/paddleocr_cache:/root/.paddleocr:rw
       - ./input:/app/data/uploads:rw
       - ./output:/app/data/output:rw
       - ./logs/backend:/app/logs:rw
@@ -154,53 +153,6 @@ services:
       - tianshu-network
 
   # ============================================================================
-  # vLLM Service - PaddleOCR (默认启动)
-  # ============================================================================
-  vllm-paddleocr:
-    image: vllm/vllm-openai:nightly
-    container_name: tianshu-vllm-paddleocr
-    restart: unless-stopped
-    ports:
-      - "30023:30023"
-    volumes:
-      - ./models:/models:ro
-      - ./models/paddlex_cache:/root/.paddlex:ro
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
-    environment:
-      - TZ=Asia/Shanghai
-      - CUDA_VISIBLE_DEVICES=${VLLM_PADDLE_DEVICE:-0}
-      - TOKENIZERS_PARALLELISM=false
-      - GLOG_minloglevel=2
-      - VLLM_LOGGING_LEVEL=ERROR
-      - PYTHONWARNINGS=ignore
-    # ⬇️ [优化] 显存降至 0.6，防止卡顿；限制单次处理 1 张图
-    command: >
-      --model /root/.paddlex/official_models/PaddleOCR-VL-1.5-0.9B
-      --served-model-name PaddleOCR-VL-1.5-0.9B
-      --trust-remote-code
-      --host 0.0.0.0
-      --port 30023
-      --gpu-memory-utilization 0.6
-      --max-model-len 8192
-      --max-num-batched-tokens 8192
-      --enforce-eager
-      --limit-mm-per-prompt '{"image": 1}'
-    shm_size: 32gb
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    networks:
-      - tianshu-network
-    depends_on:
-      init-models:
-        condition: service_completed_successfully
-
-  # ============================================================================
   # vLLM Service - MinerU (手动触发，互斥控制)
   # ============================================================================
   vllm-mineru:
@@ -222,7 +174,7 @@ services:
       - PYTHONWARNINGS=ignore
     # ⬇️ [优化] 显存降至 0.6，防止卡顿；限制单次处理 1 张图
     command: >
-      --model /models/MinerU2.5-2509-1.2B
+      --model /models/MinerU2.5-Pro-2605-1.2B
       --served-model-name MinerU-1.2B
       --trust-remote-code
       --host 0.0.0.0
@@ -258,8 +210,6 @@ services:
       "worker",
       "python",
       "litserve_worker.py",
-      "--paddleocr-vl-vllm-engine-enabled",
-      "--paddleocr-vl-vllm-api-list", "['http://vllm-paddleocr:30023/v1']",
       "--mineru-vllm-api-list", "['http://vllm-mineru:30024/v1']"
     ]
     ports:
@@ -268,8 +218,6 @@ services:
       - ./backend:/app/backend:rw
       - /var/run/docker.sock:/var/run/docker.sock
       - ./models:/app/models:rw
-      - ./models/paddlex_cache:/root/.paddlex:rw
-      - ./models/paddleocr_cache:/root/.paddleocr:rw
       - ./input:/app/data/uploads:rw
       - ./output:/app/data/output:rw
       - ./logs/worker:/app/logs:rw
@@ -281,8 +229,9 @@ services:
       - HOST=0.0.0.0
       - WORKER_PORT=8001
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # ⬇️ [核心优化] 强制单任务串行
-      - MAX_CONCURRENT_TASKS=1
+      # ⬇️ 并发控制唯一入口（默认单任务串行）；>1 时必须同步下调 MINERU_VIRTUAL_VRAM_SIZE，否则 CUDA OOM
+      - MAX_CONCURRENT_TASKS=${MAX_CONCURRENT_TASKS:-1}
+      - MINERU_VIRTUAL_VRAM_SIZE=${MINERU_VIRTUAL_VRAM_SIZE:-8}
       - WORKER_GPUS=1
       - MAX_BATCH_SIZE=1
       - MODEL_PATH=/app/models
@@ -305,8 +254,6 @@ services:
       - REDIS_QUEUE_ENABLED=${REDIS_QUEUE_ENABLED:-false}
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
-      - PADDLE_HOME=/root/.paddleocr
-      - PADDLEX_HOME=/root/.paddlex
     mem_limit: ${WORKER_MEMORY_LIMIT:-16G}
     memswap_limit: ${WORKER_MEMORY_LIMIT:-16G}
     mem_reservation: ${WORKER_MEMORY_RESERVATION:-8G}
@@ -363,6 +310,8 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
       cache_from:
         - tianshu-frontend:latest
     image: tianshu-frontend:latest

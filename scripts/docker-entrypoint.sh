@@ -55,7 +55,7 @@ check_environment() {
             exit 1
         fi
 
-        if [ "$JWT_SECRET_KEY" = "CHANGE_THIS_TO_A_SECURE_RANDOM_STRING_IN_PRODUCTION" ]; then
+        if [ "$JWT_SECRET_KEY" = "CHANGE_THIS_TO_A_SECURE_RANDOM_STRING_IN_PRODUCTION" ] || [ "$JWT_SECRET_KEY" = "your-secret-key-change-in-production" ]; then
             log_warning "JWT_SECRET_KEY is using default value, must be changed for production!"
         fi
     fi
@@ -133,12 +133,6 @@ check_models() {
     fi
 
     # Check key models
-    if [ -d "$MODEL_PATH/paddleocr_vl" ]; then
-        log_success "PaddleOCR-VL model found"
-    else
-        log_warning "PaddleOCR-VL model not found, will be automatically downloaded on first run"
-    fi
-
     if [ -d "$MODEL_PATH/sensevoice" ]; then
         log_success "SenseVoice model found"
     else
@@ -195,11 +189,6 @@ check_gpu() {
 
     # Check PyTorch
     python -c "import torch; print('PyTorch CUDA:', torch.cuda.is_available())" 2>&1 | while read line; do
-        log_info "$line"
-    done
-
-    # Check PaddlePaddle
-    python -c "import paddle; print('Paddle CUDA:', paddle.device.is_compiled_with_cuda())" 2>&1 | while read line; do
         log_info "$line"
     done
 

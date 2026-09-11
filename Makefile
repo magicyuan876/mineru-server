@@ -30,6 +30,12 @@ else
     REDIS_STATUS := disabled
 endif
 
+# 从 .env 读取 API 端口（默认 8000）
+API_PORT := $(shell [ -f .env ] && grep -E "^API_PORT=" .env | cut -d= -f2- | tr -d '[:space:]')
+ifeq ($(strip $(API_PORT)),)
+    API_PORT := 8000
+endif
+
 # 颜色输出
 RED := \033[0;31m
 GREEN := \033[0;32m
@@ -59,38 +65,8 @@ help: ## 显示帮助信息
 # ============================================================================
 # 安装和配置
 # ============================================================================
-setup: ## 全新部署（配置环境 + 构建镜像 + 启动服务）
-	@echo "$(BLUE)[INFO]$(NC) 开始全新部署..."
-	@if [ ! -f .env ]; then \
-		if [ -f .env.example ]; then \
-			cp .env.example .env; \
-			echo "$(GREEN)[OK]$(NC) .env 文件已创建"; \
-			echo "$(YELLOW)[WARNING]$(NC) 请编辑 .env 文件，特别是 JWT_SECRET_KEY"; \
-		else \
-			echo "$(RED)[ERROR]$(NC) .env.example 文件不存在"; \
-			exit 1; \
-		fi; \
-	else \
-		echo "$(GREEN)[OK]$(NC) .env 文件已存在"; \
-	fi
-	@mkdir -p models data/uploads data/output data/db logs/backend logs/worker logs/mcp
-	@echo "$(GREEN)[OK]$(NC) 目录结构创建完成"
-	@$(MAKE) build
-	@$(MAKE) start
-	@$(MAKE) info
-
-check: ## 检查系统依赖
-	@echo "$(BLUE)[INFO]$(NC) 检查系统依赖..."
-	@command -v docker >/dev/null 2>&1 || { echo "$(RED)[ERROR]$(NC) Docker 未安装"; exit 1; }
-	@echo "$(GREEN)[OK]$(NC) Docker: $$(docker --version)"
-	@$(COMPOSE_CMD) version >/dev/null 2>&1 || { echo "$(RED)[ERROR]$(NC) Docker Compose 未安装"; exit 1; }
-	@echo "$(GREEN)[OK]$(NC) Docker Compose: $$($(COMPOSE_CMD) version)"
-	@if command -v nvidia-smi >/dev/null 2>&1; then \
-		echo "$(GREEN)[OK]$(NC) 检测到 NVIDIA GPU"; \
-		nvidia-smi --query-gpu=gpu_name,driver_version --format=csv,noheader; \
-	else \
-		echo "$(YELLOW)[WARNING]$(NC) 未检测到 NVIDIA GPU"; \
-	fi
+setup: ## 交互式部署（调用根目录 setup.sh：配置环境 + 构建镜像 + 启动服务）
+	@./setup.sh
 
 # ============================================================================
 # 构建
@@ -192,11 +168,10 @@ test-gpu: ## 测试 GPU 可用性
 	@echo "$(BLUE)[INFO]$(NC) 测试 GPU..."
 	@$(COMPOSE_CMD) exec worker nvidia-smi || echo "$(YELLOW)[WARNING]$(NC) GPU 不可用"
 	@$(COMPOSE_CMD) exec worker python -c "import torch; print('PyTorch CUDA:', torch.cuda.is_available())"
-	@$(COMPOSE_CMD) exec worker python -c "import paddle; print('Paddle CUDA:', paddle.device.is_compiled_with_cuda())"
 
 test-api: ## 测试 API 是否可访问
-	@echo "$(BLUE)[INFO]$(NC) 测试 API..."
-	@curl -f http://localhost:8000/health && echo "$(GREEN)[OK]$(NC) API 正常" || echo "$(RED)[ERROR]$(NC) API 不可访问"
+	@echo "$(BLUE)[INFO]$(NC) 测试 API (http://localhost:$(API_PORT)/api/v1/health)..."
+	@curl -f http://localhost:$(API_PORT)/api/v1/health && echo "" && echo "$(GREEN)[OK]$(NC) API 正常" || echo "$(RED)[ERROR]$(NC) API 不可访问"
 
 health: ## 检查所有服务健康状态
 	@echo "$(BLUE)[INFO]$(NC) 检查服务健康状态..."

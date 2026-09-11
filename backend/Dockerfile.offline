@@ -12,9 +12,19 @@
 #   - 不依赖网络下载
 
 # ============================================================================
+# 镜像源配置（构建参数）：
+#   - 默认使用国内镜像（阿里云 apt / 清华 PyPI）
+#   - 海外网络: docker buildx build --build-arg APT_MIRROR= --build-arg PIP_MIRROR=https://pypi.org/simple ...
+# ============================================================================
+ARG APT_MIRROR=mirrors.aliyun.com
+ARG PIP_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
+
+# ============================================================================
 # Stage 1: Base Image with CUDA Support
 # ============================================================================
 FROM nvidia/cuda:12.6.2-cudnn-runtime-ubuntu24.04 AS base
+ARG APT_MIRROR
+ARG PIP_MIRROR
 
 # 设置环境变量
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -27,6 +37,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_CACHE_DIR=/root/.cache/pip
 
 # 安装系统依赖
+# [网络优化] APT_MIRROR 非空时切换 apt 源（默认阿里云；海外构建传 --build-arg APT_MIRROR= 保留官方源）
+RUN if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s/archive.ubuntu.com/${APT_MIRROR}/g" /etc/apt/sources.list.d/ubuntu.sources && \
+        sed -i "s/security.ubuntu.com/${APT_MIRROR}/g" /etc/apt/sources.list.d/ubuntu.sources; \
+    fi
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
     python3.12-dev \
@@ -77,7 +93,7 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
 # 升级 pip（使用国内镜像源，增加超时时间）
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install --upgrade pip setuptools wheel \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -i ${PIP_MIRROR} \
     --break-system-packages \
     --ignore-installed \
     --default-timeout=300
@@ -86,23 +102,16 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Stage 2: Dependencies Installation
 # ============================================================================
 FROM base AS dependencies
+ARG PIP_MIRROR
 
 WORKDIR /tmp
 
 # 复制 requirements.txt
 COPY backend/requirements.txt /tmp/requirements.txt
 
-# 分步安装依赖（解决 PyTorch + PaddlePaddle CUDA 冲突）
+# 分步安装依赖
 # 使用 BuildKit 缓存挂载，避免重复下载大文件
-# Step 1: 安装 PaddlePaddle GPU 版本（~1.8GB，首次较慢，后续使用缓存）
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install paddlepaddle-gpu==3.2.0 \
-    -i https://www.paddlepaddle.org.cn/packages/stable/cu126/ \
-    --break-system-packages \
-    --default-timeout=600 \
-    --retries 5
-
-# Step 2: 安装 PyTorch (CUDA 12.6, ~2GB, 包含 torchaudio for SenseVoice/FunASR)
+# Step 1: 安装 PyTorch (CUDA 12.6, ~2GB, 包含 torchaudio for SenseVoice/FunASR)
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install torch==2.6.0+cu126 torchvision==0.21.0+cu126 torchaudio==2.6.0+cu126 \
     --index-url https://download.pytorch.org/whl/cu126 \
@@ -110,68 +119,60 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --default-timeout=600 \
     --retries 5
 
-# Step 3: 预先安装 Python 3.12 关键依赖
+# Step 2: 预先安装 Python 3.12 关键依赖
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install "kiwisolver>=1.4.5" "Pillow>=11.0.0" \
     "numpy>=1.26.0,<2.0.0" "setuptools>=75.0.0" "lxml>=5.3.0" \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -i ${PIP_MIRROR} \
     --break-system-packages \
     --default-timeout=300 \
     --retries 5
 
-# Step 3.5: 安装 transformers 核心依赖（regex、huggingface-hub 等）
+# Step 2.5: 安装 transformers 核心依赖（regex、huggingface-hub 等）
 RUN --mount=type=cache,target=/root/.cache/pip \
     echo "Installing transformers dependencies..." && \
     pip install regex packaging filelock requests tqdm \
     "huggingface-hub>=0.23.2,<1.0" \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -i ${PIP_MIRROR} \
     --break-system-packages \
     --default-timeout=300 \
     --retries 5
 
-# Step 4: 安装 MinerU 及其依赖（允许自动解析依赖）
+# Step 3: 安装 MinerU 及其依赖（允许自动解析依赖）
 RUN --mount=type=cache,target=/root/.cache/pip \
     echo "Installing MinerU with dependencies..." && \
-    pip install "mineru[core]>=3.0.9" \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    pip install "mineru[core]>=3.4.5" \
+    -i ${PIP_MIRROR} \
     --break-system-packages \
     --default-timeout=600 \
     --retries 5
 
-# Step 4.5: 安装其他核心包
+# Step 3.5: 安装其他核心包
 RUN --mount=type=cache,target=/root/.cache/pip \
     echo "Installing other core packages..." && \
-    pip install paddleocr[doc-parser] \
-    transformers==4.57.6 \
+    pip install transformers==4.57.6 \
     fastapi uvicorn litserve aiohttp \
     PyMuPDF Pillow img2pdf einops easydict addict loguru modelscope \
     minio markitdown \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -i ${PIP_MIRROR} \
     --break-system-packages \
     --default-timeout=300 \
     --retries 5
 
-# Step 5: 确保 albumentations 版本兼容（MinerU 3.0+ 需要 >=1.4.11）
+# Step 4: 确保 albumentations 版本兼容（MinerU 3.0+ 需要 >=1.4.11）
 RUN --mount=type=cache,target=/root/.cache/pip \
     echo "Ensuring albumentations compatibility..." && \
     pip install 'albumentations>=1.4.11' \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -i ${PIP_MIRROR} \
     --break-system-packages \
     --default-timeout=300 \
     --retries 5
 
-# Step 6: 安装 safetensors（PaddlePaddle 依赖）
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --break-system-packages \
-    --default-timeout=300 \
-    --retries 5 \
-    https://paddle-whl.bj.bcebos.com/nightly/cu126/safetensors/safetensors-0.6.2.dev0-cp38-abi3-linux_x86_64.whl
-
-# Step 7: 解析剩余依赖（使用 legacy resolver，避免回溯超时）
+# Step 5: 解析剩余依赖（使用 legacy resolver，避免回溯超时）
 RUN --mount=type=cache,target=/root/.cache/pip \
     echo "Resolving remaining dependencies with legacy resolver..." && \
     pip install -r /tmp/requirements.txt \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -i ${PIP_MIRROR} \
     --break-system-packages \
     --use-deprecated=legacy-resolver \
     --default-timeout=600 \
@@ -182,7 +183,7 @@ RUN python -c "import sys; print('Python:', sys.version)" && \
     python -c "import torch; print('✅ PyTorch:', torch.__version__)" && \
     python -c "import transformers; print('✅ Transformers:', transformers.__version__)" && \
     python -c "import funasr; print('✅ FunASR:', funasr.__version__)" && \
-    echo "⚠️  Paddle CUDA 验证将在运行时进行（构建时无 GPU 访问）"
+    echo "✅ 依赖安装完成（CUDA 验证将在运行时进行，构建时无 GPU 访问）"
 
 # ============================================================================
 # Stage 3: Application

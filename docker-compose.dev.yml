@@ -24,6 +24,9 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
+        PIP_MIRROR: ${PIP_MIRROR:-https://mirrors.aliyun.com/pypi/simple/}
       target: dependencies  # 只构建到依赖阶段，代码通过挂载
     image: tianshu-backend:dev
     container_name: tianshu-backend-dev
@@ -102,6 +105,9 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
+        PIP_MIRROR: ${PIP_MIRROR:-https://mirrors.aliyun.com/pypi/simple/}
       target: dependencies
     image: tianshu-backend:dev
     container_name: tianshu-worker-dev
@@ -171,6 +177,9 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
+        PIP_MIRROR: ${PIP_MIRROR:-https://mirrors.aliyun.com/pypi/simple/}
       target: dependencies
     image: tianshu-backend:dev
     container_name: tianshu-mcp-dev

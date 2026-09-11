@@ -8,18 +8,26 @@
 #   docker run -p 80:80 tianshu-frontend:latest
 
 # ============================================================================
+# 镜像源配置（构建参数）：
+#   - 默认使用 npmmirror 国内镜像
+#   - 海外网络: docker buildx build --build-arg NPM_REGISTRY=https://registry.npmjs.org ...
+# ============================================================================
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
+# ============================================================================
 # Stage 1: Build Stage
 # ============================================================================
 FROM node:20-alpine AS builder
+ARG NPM_REGISTRY
 
 WORKDIR /app
 
 # 复制 package.json 和 package-lock.json
 COPY frontend/package*.json ./
 
-# 安装依赖（使用国内镜像加速）
+# 安装依赖（NPM_REGISTRY 非空时使用指定 registry，默认 npmmirror 加速）
 # 注意：构建阶段需要 devDependencies（包括 vite, typescript, postcss 等）
-RUN npm config set registry https://registry.npmmirror.com && \
+RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi && \
     npm install --ignore-scripts && \
     npm cache clean --force
 
