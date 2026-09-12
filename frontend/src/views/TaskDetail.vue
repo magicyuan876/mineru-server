@@ -74,16 +74,26 @@
 
         <div v-if="showPdf" :class="['card p-0 flex flex-col h-full border border-gray-200 relative shadow-sm min-w-0 transition-all duration-300', layoutMode === 'split' ? 'flex-1 basis-1/2' : 'flex-1 basis-full']">
           <div class="bg-gray-50 px-3 py-2 border-b border-gray-200 flex justify-between items-center shrink-0">
-            <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">源文档预览 (悬浮出现互动热区)</span>
+            <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">{{ isImageSource ? '源图片预览' : '源文档预览 (悬浮出现互动热区)' }}</span>
           </div>
 
           <div class="flex-1 relative overflow-hidden min-h-0 bg-gray-200">
             <VirtualPdfViewer
+              v-if="!isImageSource"
               ref="pdfViewerRef"
               :src="pdfUrl"
               :layout-data="layoutData"
               @block-click="handlePdfBlockClick"
             />
+            <div v-else class="h-full w-full overflow-auto flex items-start justify-center p-4">
+              <img
+                v-if="sourceImageUrl"
+                :src="sourceImageUrl"
+                :alt="task?.file_name"
+                class="max-w-full h-auto shadow-md bg-white"
+              />
+              <div v-else class="text-sm text-gray-400 mt-10">源文件不可用</div>
+            </div>
           </div>
         </div>
 
@@ -159,7 +169,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useTaskStore } from '@/stores'
+import { useTaskStore, useAuthStore } from '@/stores'
 import { ArrowLeft, AlertCircle, RefreshCw, FileText, Columns, Download, RotateCw, Eraser, Pause, Image, Table, Trash2, XCircle } from 'lucide-vue-next'
 import StatusBadge from '@/components/StatusBadge.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -172,6 +182,7 @@ const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const taskStore = useTaskStore()
+const authStore = useAuthStore()
 
 const taskId = computed(() => route.params.id as string)
 const task = computed(() => taskStore.currentTask)
@@ -186,7 +197,22 @@ const activeBlockId = ref<string | number | null>(null)
 const pdfViewerRef = ref<InstanceType<typeof VirtualPdfViewer> | null>(null)
 
 const pdfUrl = computed(() => task.value?.data?.pdf_path ? `/api/v1/files/output/${task.value.data.pdf_path}` : null)
-const showPdf = computed(() => layoutMode.value === 'split' || (layoutMode.value === 'single' && pdfUrl.value))
+
+// 图片源文件不产出 PDF，左栏改为直接预览原图
+const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp', '.gif']
+const isImageSource = computed(() => {
+  const name = task.value?.file_name?.toLowerCase() || ''
+  return IMAGE_EXTS.some(ext => name.endsWith(ext))
+})
+const sourceImageUrl = computed(() => {
+  const url = task.value?.source_url
+  if (!isImageSource.value || !url) return null
+  // 文件服务接口需要鉴权，<img> 无法携带请求头，追加 token 查询参数
+  const token = authStore.token
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url
+})
+
+const showPdf = computed(() => layoutMode.value === 'split' || (layoutMode.value === 'single' && (pdfUrl.value || sourceImageUrl.value)))
 const showMarkdown = computed(() => layoutMode.value === 'split' || layoutMode.value !== 'single')
 
 const layoutData = computed(() => {
