@@ -165,7 +165,7 @@ npm run build     # tsc && vite build → dist/
 
 ### 父子任务（PDF 分片 + ZIP 解包）
 
-两类任务在 **Worker 中**拆分为父子任务（API 秒级响应），共用 `task_db.py` 的父子任务机制：`convert_to_parent_task` → N 个 `create_child_task`（子任务的 chunk_info 存在 options JSON 里）→ 子任务独立处理 → `on_child_task_completed` 在最后一个子任务完成时返回父 ID → `_merge_parent_task_results` 合并 Markdown/JSON。失败走 `on_child_task_failed`。
+两类任务在 **Worker 中**拆分为父子任务（API 秒级响应），共用 `task_db.py` 的父子任务机制：`convert_to_parent_task` → `create_child_tasks_bulk` 单事务批量建子任务（chunk_info 存在 options JSON 里）→ 子任务独立处理 → `on_child_task_completed` 在最后一个子任务完成时返回父 ID → `_merge_parent_task_results` 合并 Markdown/JSON。失败走 `on_child_task_failed`。
 
 - **PDF 分片**：超过 `PDF_SPLIT_THRESHOLD_PAGES`（默认 500 页）时按 `PDF_SPLIT_CHUNK_SIZE` 页切分，分片存 `output_dir/splits/{task_id}/`，chunk_info 为 `{start_page, end_page, page_count}`，合并时按页序拼接并修正 page_idx 偏移。
 - **ZIP 解包**：`.zip` 任务在引擎路由前由 `_should_split_zip` 解包（任何 backend 值都走拆分，子任务继承父任务 backend），安全限制：最多 200 个条目、解压总大小上限 2GB（防 zip bomb），跳过目录、`__MACOSX`/隐藏文件、嵌套 zip 与非白名单格式；解压文件同样存 `output_dir/splits/{task_id}/`，chunk_info 为 `{index, entry_name}`，合并时按 index 排序并在每段 Markdown 前加 `## {entry_name}` 章节头。

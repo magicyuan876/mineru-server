@@ -919,18 +919,26 @@ class MinerUWorkerAPI(ls.LitAPI):
 
             self.task_db.convert_to_parent_task(task_id, child_count=0)
 
+            children = []
             for i, (entry_name, extracted_path) in enumerate(entries, start=1):
                 c_ops = options.copy()
                 c_ops["chunk_info"] = {"index": i, "entry_name": entry_name}
-                self.task_db.create_child_task(
-                    parent_task_id=task_id,
-                    file_name=entry_name,
-                    file_path=str(extracted_path),
-                    backend=task.get("backend", "auto"),
-                    options=c_ops,
-                    priority=task.get("priority", 0),
-                    user_id=task.get("user_id"),
+                children.append(
+                    {
+                        "file_name": entry_name,
+                        "file_path": str(extracted_path),
+                        "options": c_ops,
+                    }
                 )
+
+            # 与 PDF 拆分同理：条目多时逐个 INSERT 会产生同样多的写事务并反复更新父行
+            self.task_db.create_child_tasks_bulk(
+                parent_task_id=task_id,
+                children=children,
+                backend=task.get("backend", "auto"),
+                priority=task.get("priority", 0),
+                user_id=task.get("user_id"),
+            )
 
             self.task_db.convert_to_parent_task(task_id, child_count=len(entries))
             logger.info(f"📦 Extracted zip into {len(entries)} subtasks")

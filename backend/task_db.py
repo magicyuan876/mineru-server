@@ -769,62 +769,6 @@ class TaskDB:
             )
         logger.info(f"🔄 Converted task {task_id} to parent task with {child_count} children")
 
-    def create_child_task(
-        self,
-        parent_task_id: str,
-        file_name: str,
-        file_path: str,
-        backend: str = "pipeline",
-        options: dict = None,
-        priority: int = 0,
-        user_id: str = None,
-    ) -> str:
-        """创建子任务"""
-        task_id = str(uuid.uuid4())
-        with self.get_cursor() as cursor:
-            # 创建子任务
-            cursor.execute(
-                """
-                INSERT INTO tasks (
-                    task_id, parent_task_id, file_name, file_path,
-                    backend, options, status, priority, user_id
-                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-            """,
-                (
-                    task_id,
-                    parent_task_id,
-                    file_name,
-                    file_path,
-                    backend,
-                    json.dumps(options or {}),
-                    priority,
-                    user_id,
-                ),
-            )
-
-            # 更新父任务的子任务计数
-            cursor.execute(
-                """
-                UPDATE tasks
-                SET child_count = child_count + 1
-                WHERE task_id = ?
-            """,
-                (parent_task_id,),
-            )
-
-        logger.debug(f"📄 Created child task: {task_id} (parent: {parent_task_id})")
-
-        # 子任务同样入队 Redis，否则 Redis 队列模式下永远不会被 Worker 拉取
-        self._enqueue_to_redis(
-            task_id,
-            priority,
-            {
-                "file_name": file_name,
-                "backend": backend,
-            },
-        )
-        return task_id
-
     def create_child_tasks_bulk(
         self,
         parent_task_id: str,
@@ -835,10 +779,9 @@ class TaskDB:
     ) -> List[str]:
         """批量创建子任务（单事务）
 
-        逐个调用 create_child_task 会为每个子任务开一个独立的写事务，并且每次都要
-        更新同一个父任务行。PDF 按小页数切片时子任务可达上百个，那就是上百个背靠背
-        的写事务 —— 期间 API 侧的查询会反复撞上锁等待。这里合并为一个事务：
-        N 次 INSERT + 1 次父计数更新。
+        每个子任务单开一个写事务、并各自更新同一个父任务行的话，PDF 按小页数切片时
+        子任务可达上百个，那就是上百个背靠背的写事务 —— 期间 API 侧的查询会反复撞上
+        锁等待。这里合并为一个事务：N 次 INSERT + 1 次父计数更新。
 
         Args:
             parent_task_id: 父任务 ID

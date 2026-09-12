@@ -130,7 +130,8 @@ The worker then writes a JSON blob into the `tasks.data` column with keys the fr
 ### Parent/child tasks (large PDFs)
 
 PDFs above `PDF_SPLIT_THRESHOLD_PAGES` are split in the **worker** (not the API) into child tasks of
-`PDF_SPLIT_CHUNK_SIZE` pages: `convert_to_parent_task` → N × `create_child_task` → each child processed
+`PDF_SPLIT_CHUNK_SIZE` pages: `convert_to_parent_task` → `create_child_tasks_bulk` (one transaction:
+N inserts + a single parent-counter update) → each child processed
 independently → `on_child_task_completed` returns the parent id once the last child lands →
 `_merge_parent_task_results` concatenates Markdown/JSON in page order. Failures route through
 `on_child_task_failed`.
