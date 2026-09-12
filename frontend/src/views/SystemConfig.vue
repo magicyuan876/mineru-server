@@ -128,6 +128,21 @@
           <p class="mt-1 ml-6 text-xs text-gray-500">{{ $t('systemConfig.allowRegistrationHelp') }}</p>
         </div>
 
+        <!-- 注册邀请码 -->
+        <div>
+          <label for="registration_invite_code" class="block text-sm font-medium text-gray-700 mb-2">
+            {{ $t('systemConfig.inviteCode') }}
+          </label>
+          <input
+            id="registration_invite_code"
+            v-model="formData.registration_invite_code"
+            type="text"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            :placeholder="$t('systemConfig.inviteCodePlaceholder')"
+          />
+          <p class="mt-1 text-xs text-gray-500">{{ $t('systemConfig.inviteCodeHelp') }}</p>
+        </div>
+
         <!-- 按钮组 -->
         <div class="flex justify-end space-x-4 pt-4 border-t border-gray-200">
           <button
@@ -351,6 +366,7 @@ const originalConfig = ref<SystemConfig>({
   system_logo: '',
   show_github_star: true,
   allow_registration: true,
+  registration_invite_code: '',
 })
 
 // 表单数据
@@ -359,6 +375,7 @@ const formData = ref<SystemConfig>({
   system_logo: '',
   show_github_star: true,
   allow_registration: true,
+  registration_invite_code: '',
 })
 
 // Logo 上传相关
@@ -576,6 +593,13 @@ async function handleSubmit() {
     }
     if (formData.value.allow_registration !== originalConfig.value.allow_registration) {
       updates.allow_registration = formData.value.allow_registration
+    }
+    // 邀请码为掩码值时表示未修改，不提交；清空则提交空字符串以移除邀请码
+    if (
+      formData.value.registration_invite_code !== originalConfig.value.registration_invite_code &&
+      formData.value.registration_invite_code !== '********'
+    ) {
+      updates.registration_invite_code = formData.value.registration_invite_code ?? ''
     }
 
     if (Object.keys(updates).length === 0) {

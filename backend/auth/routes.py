@@ -56,6 +56,20 @@ async def register(user_data: RegisterRequest, auth_db: AuthDB = Depends(get_aut
     if allow_registration != "true":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Registration is disabled")
 
+    # 邀请码校验：管理员配置后注册必须携带，比对用常量时间比较防止时序侧信道
+    try:
+        required_invite_code = (SystemConfig().get_config("registration_invite_code") or "").strip()
+    except Exception as e:
+        logger.error(f"❌ Failed to read registration_invite_code config: {e}")
+        required_invite_code = ""
+
+    if required_invite_code:
+        import hmac
+
+        provided = (user_data.invite_code or "").strip()
+        if not provided or not hmac.compare_digest(provided, required_invite_code):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid invite code")
+
     try:
         # 公开注册入口不允许指定角色，固定为普通用户
         user = auth_db.create_user(
@@ -495,6 +509,9 @@ async def get_system_config():
     config = SystemConfig()
     configs = config.get_all_configs()
 
+    # 邀请码只暴露"是否需要"，绝不回传真实值；掩码供管理员页面回显
+    invite_code_set = bool((configs.get("registration_invite_code") or "").strip())
+
     # 转换布尔值配置项
     return {
         "success": True,
@@ -503,6 +520,8 @@ async def get_system_config():
             "system_logo": configs.get("system_logo", ""),
             "show_github_star": configs.get("show_github_star", "true") == "true",
             "allow_registration": configs.get("allow_registration", "true") == "true",
+            "registration_invite_required": invite_code_set,
+            "registration_invite_code": "********" if invite_code_set else "",
         },
     }
 
@@ -533,6 +552,7 @@ async def update_system_config(
         "system_logo",
         "show_github_star",
         "allow_registration",
+        "registration_invite_code",
         # 图片描述（多模态大模型）配置
         "image_caption_enabled",
         "image_caption_api_base",
@@ -547,8 +567,8 @@ async def update_system_config(
 
     for key, value in config_data.items():
         if key in allowed_keys:
-            # api_key 为掩码占位符时表示前端未修改，跳过不更新
-            if key == "image_caption_api_key" and value == "********":
+            # 掩码占位符表示前端未修改，跳过不更新
+            if key in {"image_caption_api_key", "registration_invite_code"} and value == "********":
                 continue
             # 转换布尔值配置项为字符串
             if key in {"show_github_star", "allow_registration", "image_caption_enabled"}:
@@ -568,6 +588,7 @@ async def update_system_config(
 
     # 返回更新后的配置
     updated_configs = config.get_all_configs()
+    invite_code_set = bool((updated_configs.get("registration_invite_code") or "").strip())
     return {
         "success": True,
         "message": "Configuration updated successfully",
@@ -576,6 +597,8 @@ async def update_system_config(
             "system_logo": updated_configs.get("system_logo", ""),
             "show_github_star": updated_configs.get("show_github_star", "true") == "true",
             "allow_registration": updated_configs.get("allow_registration", "true") == "true",
+            "registration_invite_required": invite_code_set,
+            "registration_invite_code": "********" if invite_code_set else "",
         },
     }
 

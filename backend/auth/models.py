@@ -115,6 +115,8 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=100)
     full_name: Optional[str] = Field(None, max_length=100)
+    # 管理员在系统配置中设置邀请码后，注册时必须携带
+    invite_code: Optional[str] = Field(None, max_length=100)
 
 
 class UserCreate(BaseModel):

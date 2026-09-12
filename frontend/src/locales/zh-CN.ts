@@ -76,6 +76,8 @@ export default {
     registerFailed: '注册失败',
     registrationDisabled: '注册功能已关闭',
     registrationDisabledMessage: '系统管理员已关闭注册功能，请联系管理员获取账号',
+    inviteCode: '邀请码',
+    inviteCodePlaceholder: '请输入管理员提供的邀请码',
   },
   dashboard: {
     title: '仪表盘',
@@ -586,6 +588,9 @@ export default {
     showGithubStarHelp: '在页脚显示 GitHub Star 引导链接',
     allowRegistration: '允许用户注册',
     allowRegistrationHelp: '关闭后，用户将无法自行注册账号，只能由管理员创建',
+    inviteCode: '注册邀请码',
+    inviteCodePlaceholder: '留空则不需要邀请码',
+    inviteCodeHelp: '设置后，用户注册时必须填写该邀请码；清空并保存即可移除',
     save: '保存配置',
     saving: '保存中...',
     reset: '重置',

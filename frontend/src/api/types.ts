@@ -41,6 +41,7 @@ export interface RegisterRequest {
   password: string
   full_name?: string
   role?: UserRole
+  invite_code?: string
 }
 
 // 修改密码请求
@@ -334,6 +335,8 @@ export interface SystemConfig {
   system_logo: string
   show_github_star: boolean
   allow_registration: boolean
+  registration_invite_required?: boolean
+  registration_invite_code?: string
 }
 
 // 系统配置响应
@@ -348,6 +351,7 @@ export interface SystemConfigUpdateRequest {
   system_logo?: string
   show_github_star?: boolean
   allow_registration?: boolean
+  registration_invite_code?: string
   image_caption_enabled?: boolean
   image_caption_api_base?: string
   image_caption_api_key?: string
