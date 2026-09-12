@@ -62,3 +62,4 @@ docker-images
 docker-images-cpu
 models-offline
 cpu-deployment
+uv.lock
