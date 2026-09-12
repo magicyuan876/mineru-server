@@ -358,15 +358,27 @@ check_dependencies() {
 # 环境配置
 # ----------------------------------------------------------------------------
 prepare_env() {
+    # 示例文件名与 ENV_FILE 派生一致：.env -> .env.example，.env.cpu -> .env.cpu.example
+    local example_file="${ENV_FILE}.example"
     if [ ! -f "$ENV_FILE" ]; then
-        if [ ! -f .env.example ]; then
-            log_error ".env.example 不存在，无法创建 $ENV_FILE"
+        if [ ! -f "$example_file" ]; then
+            log_error "$example_file 不存在，无法创建 $ENV_FILE"
             exit 1
         fi
-        cp .env.example "$ENV_FILE"
-        log_success "已从 .env.example 创建 $ENV_FILE"
+        cp "$example_file" "$ENV_FILE"
+        log_success "已从 $example_file 创建 $ENV_FILE"
     else
         log_info "$ENV_FILE 已存在，仅更新部署相关键"
+    fi
+}
+
+# 生成随机密钥（优先 openssl，缺失时回退 /dev/urandom）
+gen_random_hex() {
+    local bytes="${1:-32}"
+    if command -v openssl > /dev/null 2>&1; then
+        openssl rand -hex "$bytes"
+    else
+        cat /dev/urandom | LC_ALL=C tr -dc 'a-f0-9' | head -c $((bytes * 2))
     fi
 }
 
@@ -375,9 +387,11 @@ ensure_jwt_secret() {
     local jwt
     jwt=$(get_env_key JWT_SECRET_KEY)
     case "$jwt" in
-        "" | your-secret-key-change-in-production | CHANGE_THIS_TO_A_SECURE_RANDOM_STRING_IN_PRODUCTION)
-            if command -v openssl > /dev/null 2>&1; then
-                set_env_key JWT_SECRET_KEY "$(openssl rand -hex 32)"
+        "" | your-secret-key-change-in-production | dev-secret-key-change-in-production | cpu-dev-secret-key-change-in-production | temp-secret-key | CHANGE_THIS_TO_A_SECURE_RANDOM_STRING_IN_PRODUCTION)
+            local secret
+            secret=$(gen_random_hex 32)
+            if [ -n "$secret" ]; then
+                set_env_key JWT_SECRET_KEY "$secret"
                 log_success "JWT_SECRET_KEY 已自动生成（openssl rand -hex 32）"
             else
                 log_warning "未找到 openssl，请手动修改 $ENV_FILE 中的 JWT_SECRET_KEY"
@@ -385,6 +399,76 @@ ensure_jwt_secret() {
             ;;
         *)
             log_info "JWT_SECRET_KEY 已自定义，保持不变"
+            ;;
+    esac
+}
+
+# RustFS 访问密钥为空或为已知占位符/默认凭据时自动生成
+ensure_rustfs_keys() {
+    local rustfs_enabled
+    rustfs_enabled=$(get_env_key RUSTFS_ENABLED)
+    if [ "$rustfs_enabled" = "false" ]; then
+        return 0
+    fi
+
+    local access_key
+    access_key=$(get_env_key RUSTFS_ACCESS_KEY)
+    case "$access_key" in
+        "" | rustfsadmin | CHANGE_THIS_TO_A_RANDOM_VALUE)
+            set_env_key RUSTFS_ACCESS_KEY "$(gen_random_hex 16)"
+            log_success "RUSTFS_ACCESS_KEY 已自动生成（openssl rand -hex 16）"
+            ;;
+        *)
+            log_info "RUSTFS_ACCESS_KEY 已自定义，保持不变"
+            ;;
+    esac
+
+    local secret_key
+    secret_key=$(get_env_key RUSTFS_SECRET_KEY)
+    case "$secret_key" in
+        "" | rustfsadmin | CHANGE_THIS_TO_A_RANDOM_VALUE)
+            set_env_key RUSTFS_SECRET_KEY "$(gen_random_hex 32)"
+            log_success "RUSTFS_SECRET_KEY 已自动生成（openssl rand -hex 32）"
+            ;;
+        *)
+            log_info "RUSTFS_SECRET_KEY 已自定义，保持不变"
+            ;;
+    esac
+}
+
+# 启用 Redis 队列时，REDIS_PASSWORD 为空或占位符则自动生成
+ensure_redis_password() {
+    local redis_enabled
+    redis_enabled=$(get_env_key REDIS_QUEUE_ENABLED)
+    if [ "$redis_enabled" != "true" ]; then
+        return 0
+    fi
+
+    local redis_password
+    redis_password=$(get_env_key REDIS_PASSWORD)
+    case "$redis_password" in
+        "" | CHANGE_THIS_TO_A_RANDOM_VALUE)
+            set_env_key REDIS_PASSWORD "$(gen_random_hex 24)"
+            log_success "REDIS_PASSWORD 已自动生成（openssl rand -hex 24）"
+            ;;
+        *)
+            log_info "REDIS_PASSWORD 已自定义，保持不变"
+            ;;
+    esac
+}
+
+# 初始管理员密码为空或占位符时自动生成（首次部署后端强制要求）
+# 不明文回显：部署完成后提示用户到 $ENV_FILE 查看
+ensure_admin_password() {
+    local admin_password
+    admin_password=$(get_env_key TIANSHU_ADMIN_PASSWORD)
+    case "$admin_password" in
+        "" | CHANGE_THIS_TO_A_RANDOM_VALUE)
+            set_env_key TIANSHU_ADMIN_PASSWORD "$(gen_random_hex 16)"
+            log_success "TIANSHU_ADMIN_PASSWORD 已自动生成（写入 ${ENV_FILE}，请部署后查看并妥善保存）"
+            ;;
+        *)
+            log_info "TIANSHU_ADMIN_PASSWORD 已自定义，保持不变"
             ;;
     esac
 }
@@ -423,11 +507,12 @@ interactive_configure() {
     if ask_yn "是否启用 RustFS 对象存储（解析结果图片外链）" "Y"; then
         set_env_key RUSTFS_ENABLED true
         local ip
-        local rustfs_port
+        local front_port
         ip=$(detect_server_ip)
-        rustfs_port=$(get_env_key RUSTFS_PORT)
-        rustfs_port="${rustfs_port:-9000}"
-        ask "RustFS 公网访问地址（需浏览器可达）" "http://${ip:-127.0.0.1}:${rustfs_port}"
+        front_port=$(get_env_key FRONTEND_PORT)
+        front_port="${front_port:-80}"
+        # RustFS 端口仅绑定回环，图片统一经前端 nginx /s3/ 反代访问
+        ask "RustFS 公网访问地址（经前端 nginx /s3/ 反代，需浏览器可达）" "http://${ip:-127.0.0.1}:${front_port}/s3"
         set_env_key RUSTFS_PUBLIC_URL "$REPLY"
     else
         set_env_key RUSTFS_ENABLED false
@@ -455,6 +540,9 @@ tune_env() {
     min_vram=$(detect_min_vram_gb)
 
     ensure_jwt_secret
+    ensure_rustfs_keys
+    ensure_redis_password
+    ensure_admin_password
 
     # --- GPU 数量 -----------------------------------------------------------
     local gpu_count
@@ -508,22 +596,23 @@ tune_env() {
     fi
 
     # --- RustFS 公网地址 -----------------------------------------------------
-    # 解析结果中的图片会改写为该地址，必须浏览器可达
+    # 解析结果中的图片会改写为该地址，必须浏览器可达；
+    # RustFS 端口仅绑定回环，默认经前端 nginx /s3/ 路径反代
     local rustfs_enabled
     rustfs_enabled=$(get_env_key RUSTFS_ENABLED)
     if [ "$rustfs_enabled" != "false" ]; then
         local rustfs_url
-        local rustfs_port
+        local front_port
         local server_ip
         rustfs_url=$(get_env_key RUSTFS_PUBLIC_URL)
-        rustfs_port=$(get_env_key RUSTFS_PORT)
-        rustfs_port="${rustfs_port:-9000}"
+        front_port=$(get_env_key FRONTEND_PORT)
+        front_port="${front_port:-80}"
         server_ip=$(detect_server_ip)
         case "$rustfs_url" in
-            "" | *192.168.1.100*)
+            "" | *192.168.1.100* | http://localhost/s3 | http://127.0.0.1/s3)
                 if [ -n "$server_ip" ]; then
-                    set_env_key RUSTFS_PUBLIC_URL "http://${server_ip}:${rustfs_port}"
-                    log_success "RUSTFS_PUBLIC_URL = http://${server_ip}:${rustfs_port}"
+                    set_env_key RUSTFS_PUBLIC_URL "http://${server_ip}:${front_port}/s3"
+                    log_success "RUSTFS_PUBLIC_URL = http://${server_ip}:${front_port}/s3（经前端 nginx 反代）"
                 else
                     log_warning "未能探测服务器 IP，请手动设置 RUSTFS_PUBLIC_URL，否则解析结果的图片无法加载"
                 fi
@@ -577,6 +666,9 @@ create_directories() {
         input output \
         data/uploads data/output data/db \
         logs/backend logs/worker logs/mcp logs/scheduler
+    # 容器以非 root 用户（tianshu, UID 10001）运行，需保证数据/日志目录对容器可写；
+    # 权限不足时容器 entrypoint 会给出明确报错（best-effort，失败不中断）
+    chmod -R a+rwX data logs input output 2> /dev/null || true
     log_success "目录就绪"
 }
 
@@ -675,7 +767,7 @@ show_info() {
     echo "  查看状态: ${DC[*]} ps"
     echo "  停止服务: ${DC[*]} down"
     echo ""
-    log_warning "系统不预置管理员账号，请通过 Web UI 注册首个账号"
+    log_warning "管理员账号: $(get_env_key TIANSHU_ADMIN_USERNAME)（初始密码见 ${ENV_FILE} 中 TIANSHU_ADMIN_PASSWORD，请妥善保存）"
     echo ""
 }
 
@@ -706,6 +798,7 @@ dry_run_summary() {
         echo "    MODEL_DOWNLOAD_SOURCE     = $(get_env_key MODEL_DOWNLOAD_SOURCE)"
         echo "    API_PORT / FRONTEND_PORT  = ${api_port} / ${frontend_port}"
         echo "    JWT_SECRET_KEY            = $(get_env_key JWT_SECRET_KEY | cut -c1-8)...（已生成，仅显示前 8 位）"
+        echo "    TIANSHU_ADMIN_USERNAME    = $(get_env_key TIANSHU_ADMIN_USERNAME)（初始密码见 ${ENV_FILE}）"
     fi
     log_info "将创建目录: models input output data/{uploads,output,db} logs/{backend,worker,mcp,scheduler}"
     if [ "${1:-}" = "compose" ]; then
@@ -816,6 +909,8 @@ deploy_cpu() {
     set_env_key MODEL_DOWNLOAD_SOURCE local
     set_env_key HF_OFFLINE 1
     ensure_jwt_secret
+    ensure_rustfs_keys
+    ensure_admin_password
     log_success ".env.cpu 已配置（ACCELERATOR=cpu / CUDA_VISIBLE_DEVICES=空 / MODEL_DOWNLOAD_SOURCE=local / HF_OFFLINE=1）"
 
     if [ "$DRY_RUN" -eq 1 ]; then
@@ -901,11 +996,12 @@ deploy_cpu() {
     echo ""
     echo "  Web UI:        http://localhost:${frontend_port}"
     echo "  API 文档:      http://localhost:${api_port}/docs"
-    echo "  RustFS 控制台: http://localhost:${rustfs_port}1"
+    echo "  RustFS（回环）: http://127.0.0.1:${rustfs_port}"
     echo ""
     echo "  查看日志: ${DC[*]} logs -f"
     echo "  停止服务: ${DC[*]} down"
     echo ""
+    log_warning "管理员账号: $(get_env_key TIANSHU_ADMIN_USERNAME)（初始密码见 ${ENV_FILE} 中 TIANSHU_ADMIN_PASSWORD，请妥善保存）"
     log_warning "CPU 模式比 GPU 慢 10-20 倍，仅适合开发调试"
     echo ""
 }
@@ -1168,6 +1264,7 @@ deploy_dev() {
 
     prepare_env
     ensure_jwt_secret
+    ensure_admin_password
 
     if [ "$DRY_RUN" -eq 1 ]; then
         log_info "将创建目录: models input output data/{uploads,output,db} logs/{backend,worker,mcp,scheduler}"

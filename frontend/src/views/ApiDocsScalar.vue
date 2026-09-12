@@ -61,7 +61,7 @@ const apiTranslations: Record<string, string> = {
   'API根路径': 'API Root',
   '健康检查接口': 'Health Check',
   '列出所有可用的处理引擎': 'List All Available Processing Engines',
-  '无需认证。返回系统中所有可用的处理引擎信息。': 'No authentication required. Returns information about all available processing engines in the system.',
+  '需要认证。返回系统中所有可用的处理引擎信息。': 'Requires authentication. Returns information about all available processing engines in the system.',
 
   // 任务管理
   '提交文档解析任务': 'Submit Document Parsing Task',

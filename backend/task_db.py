@@ -37,6 +37,22 @@ except ImportError:
         return None
 
 
+def _resolve_output_dir() -> Path:
+    """解析输出根目录（与 api_server / worker 使用同一环境变量来源）"""
+    env = os.getenv("OUTPUT_PATH")
+    if env:
+        return Path(env).resolve()
+    return (Path(__file__).parent.parent / "data" / "output").resolve()
+
+
+def _resolve_upload_dir() -> Path:
+    """解析上传根目录（与 api_server 使用同一环境变量来源）"""
+    env = os.getenv("UPLOAD_PATH")
+    if env:
+        return Path(env).resolve()
+    return (Path(__file__).parent.parent / "input").resolve()
+
+
 class TaskDB:
     """任务数据库管理类"""
 
@@ -502,29 +518,70 @@ class TaskDB:
     # -------------------------------------------------------------------------
     # 核心修复：物理删除文件逻辑
     # -------------------------------------------------------------------------
-    def _delete_task_files(self, task_row):
-        """辅助方法：安全删除任务的源文件和结果目录"""
+    def delete_task_files(self, task_row, include_source: bool = True):
+        """安全删除任务的源文件和结果目录（带目录逃逸防护）
+
+        Args:
+            task_row: 任务记录（需包含 task_id / file_path / result_path）
+            include_source: 是否删除上传的源文件（重试/清缓存场景传 False 保留源文件）
+        """
         task_id = task_row["task_id"]
 
         # 1. 删除上传的源文件
-        if task_row["file_path"]:
+        if include_source and task_row["file_path"]:
             try:
-                fp = Path(task_row["file_path"])
-                if fp.exists() and fp.is_file():
-                    fp.unlink()
-                    logger.debug(f"Deleted source file for task {task_id}")
+                fp = Path(task_row["file_path"]).resolve()
+                if fp.is_relative_to(_resolve_upload_dir()):
+                    if fp.is_file():
+                        fp.unlink()
+                        logger.debug(f"Deleted source file for task {task_id}")
+                else:
+                    logger.warning(f"⚠️  Skip deleting source file outside upload dir for task {task_id}: {fp}")
             except Exception as e:
                 logger.warning(f"Failed to delete source file for task {task_id}: {e}")
 
         # 2. 删除结果目录
-        if task_row["result_path"]:
+        if task_row["result_path"] and task_row["result_path"] != "CLEARED":
             try:
-                rp = Path(task_row["result_path"])
-                if rp.exists() and rp.is_dir():
-                    shutil.rmtree(rp)
-                    logger.debug(f"Deleted result dir for task {task_id}")
+                rp = Path(task_row["result_path"]).resolve()
+                if rp.is_relative_to(_resolve_output_dir()):
+                    if rp.is_dir():
+                        shutil.rmtree(rp)
+                        logger.debug(f"Deleted result dir for task {task_id}")
+                else:
+                    logger.warning(f"⚠️  Skip deleting result dir outside output dir for task {task_id}: {rp}")
             except Exception as e:
                 logger.warning(f"Failed to delete result dir for task {task_id}: {e}")
+
+    # 兼容旧名，避免破坏既有调用
+    _delete_task_files = delete_task_files
+
+    def get_task_by_output_path(self, rel_path: str) -> Optional[Dict]:
+        """按输出相对路径反查任务（URL 首段即结果目录名，为 Worker 写入的 result_path 的 basename）"""
+        first_segment = rel_path.replace("\\", "/").lstrip("/").split("/")[0]
+        if not first_segment:
+            return None
+        candidate = str((_resolve_output_dir() / first_segment).resolve())
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM tasks WHERE result_path = ?", (candidate,))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            # 兜底：历史记录可能存在路径分隔符差异
+            cursor.execute("SELECT * FROM tasks WHERE result_path LIKE ?", (f"%/{first_segment}",))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_task_by_upload_path(self, rel_path: str) -> Optional[Dict]:
+        """按上传文件名精确反查任务（upload 目录内文件名唯一，不接受子目录）"""
+        name = rel_path.replace("\\", "/").lstrip("/")
+        if not name or "/" in name:
+            return None
+        candidate = str((_resolve_upload_dir() / name).resolve())
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM tasks WHERE file_path = ?", (candidate,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     def cleanup_old_task_records(self, days: int = 30):
         """清理旧任务"""
@@ -868,8 +925,15 @@ class TaskDB:
 
     def clear_task_cache(self, task_id: str) -> bool:
         """
-        清理任务缓存：保留数据库历史记录，但将 result_path 标记为已清理
+        清理任务缓存：先物理删除解析产物，再将 result_path 标记为已清理（保留数据库历史记录）
         """
+        task = self.get_task(task_id)
+        if not task:
+            return False
+
+        # 仅删除解析产物，保留上传的源文件
+        self.delete_task_files(task, include_source=False)
+
         with self.get_cursor() as cursor:
             cursor.execute(
                 """

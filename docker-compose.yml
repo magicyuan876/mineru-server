@@ -14,14 +14,19 @@ services:
     profiles:
       - redis
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      # 仅绑定宿主机回环：Redis 只对容器网络与宿主机本机暴露
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     environment:
       - TZ=Asia/Shanghai
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD required}
+    # noeviction：任务队列不允许因内存压力丢任务；CONFIG 命令禁用防止运行时改配置
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required} --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction --rename-command CONFIG ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "$$REDIS_PASSWORD", "ping"]
     networks:
       - tianshu-network
 
@@ -33,8 +38,8 @@ services:
     container_name: tianshu-rustfs
     restart: unless-stopped
     ports:
-      - "${RUSTFS_PORT:-9000}:9000"
-      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"
+      # 仅绑定宿主机回环：浏览器经前端 nginx 的 /s3/ 路径反代访问图片
+      - "127.0.0.1:${RUSTFS_PORT:-9000}:9000"
     volumes:
       - rustfs-data:/data
       - rustfs-logs:/logs
@@ -42,8 +47,8 @@ services:
       - /etc/timezone:/etc/timezone:ro
     environment:
       - TZ=Asia/Shanghai
-      - RUSTFS_ROOT_USER=${RUSTFS_ACCESS_KEY:-rustfsadmin}
-      - RUSTFS_ROOT_PASSWORD=${RUSTFS_SECRET_KEY:-rustfsadmin}
+      - RUSTFS_ROOT_USER=${RUSTFS_ACCESS_KEY:?RUSTFS_ACCESS_KEY required}
+      - RUSTFS_ROOT_PASSWORD=${RUSTFS_SECRET_KEY:?RUSTFS_SECRET_KEY required}
     networks:
       - tianshu-network
 
@@ -79,7 +84,6 @@ services:
         - tianshu-backend:latest
     image: tianshu-backend:latest
     container_name: tianshu-backend
-    user: root
     restart: unless-stopped
     ports:
       - "${API_PORT:-8000}:8000"
@@ -98,6 +102,10 @@ services:
       - API_PORT=8000
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-60}
+      # 首次部署必须设置管理员初始密码（见 .env），否则 API 服务拒绝启动
+      - TIANSHU_ADMIN_USERNAME=${TIANSHU_ADMIN_USERNAME:-admin}
+      - TIANSHU_ADMIN_PASSWORD=${TIANSHU_ADMIN_PASSWORD}
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
       - WORKER_URL=${WORKER_URL:-http://worker:8001}
       - MODEL_PATH=/app/models
@@ -106,10 +114,15 @@ services:
       - DATABASE_PATH=${DATABASE_PATH:-/app/data/db/mineru_tianshu.db}
       - RUSTFS_ENABLED=${RUSTFS_ENABLED:-true}
       - RUSTFS_ENDPOINT=${RUSTFS_ENDPOINT:-rustfs:9000}
-      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY:-rustfsadmin}
-      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY:-rustfsadmin}
+      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY}
+      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY}
       - RUSTFS_BUCKET=${RUSTFS_BUCKET:-ts-img}
-      - RUSTFS_PUBLIC_URL=${RUSTFS_PUBLIC_URL}
+      # 默认经前端 nginx /s3/ 反代访问（80 端口）；无 nginx 的本地开发可改 http://127.0.0.1:9000
+      - RUSTFS_PUBLIC_URL=${RUSTFS_PUBLIC_URL:-http://localhost/s3}
+      - REDIS_QUEUE_ENABLED=${REDIS_QUEUE_ENABLED:-false}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - MODEL_DOWNLOAD_SOURCE=${MODEL_DOWNLOAD_SOURCE:-auto}
       - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
     deploy:
@@ -133,7 +146,6 @@ services:
   scheduler:
     image: tianshu-backend:latest
     container_name: tianshu-scheduler
-    user: root
     restart: unless-stopped
     command: ["python", "task_scheduler.py", "--interval", "60", "--stale-task-timeout", "60"]
     volumes:
@@ -147,6 +159,8 @@ services:
       - TZ=Asia/Shanghai
       - DATABASE_PATH=/app/data/db/mineru_tianshu.db
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - TIANSHU_ADMIN_USERNAME=${TIANSHU_ADMIN_USERNAME:-admin}
+      - TIANSHU_ADMIN_PASSWORD=${TIANSHU_ADMIN_PASSWORD}
     depends_on:
       - backend
     networks:
@@ -161,7 +175,7 @@ services:
     restart: no
     profiles: ["manual"]
     ports:
-      - "30024:30024"
+      - "127.0.0.1:30024:30024"
     volumes:
       - ./models:/models:ro
       - /etc/localtime:/etc/localtime:ro
@@ -204,6 +218,7 @@ services:
   worker:
     image: tianshu-backend:latest
     container_name: tianshu-worker
+    # worker 必须保持 root：挂载 /var/run/docker.sock 用于 vLLM 容器互斥控制，非 root 无法操作 Docker socket
     user: root
     restart: unless-stopped
     command: [
@@ -213,7 +228,7 @@ services:
       "--mineru-vllm-api-list", "['http://vllm-mineru:30024/v1']"
     ]
     ports:
-      - "${WORKER_PORT:-8001}:8001"
+      - "127.0.0.1:${WORKER_PORT:-8001}:8001"
     volumes:
       - ./backend:/app/backend:rw
       - /var/run/docker.sock:/var/run/docker.sock
@@ -247,13 +262,14 @@ services:
       - PDF_SPLIT_CHUNK_SIZE=${PDF_SPLIT_CHUNK_SIZE:-500}
       - RUSTFS_ENABLED=${RUSTFS_ENABLED:-true}
       - RUSTFS_ENDPOINT=${RUSTFS_ENDPOINT:-rustfs:9000}
-      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY:-rustfsadmin}
-      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY:-rustfsadmin}
+      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY}
+      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY}
       - RUSTFS_BUCKET=${RUSTFS_BUCKET:-ts-img}
-      - RUSTFS_PUBLIC_URL=${RUSTFS_PUBLIC_URL}
+      - RUSTFS_PUBLIC_URL=${RUSTFS_PUBLIC_URL:-http://localhost/s3}
       - REDIS_QUEUE_ENABLED=${REDIS_QUEUE_ENABLED:-false}
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     mem_limit: ${WORKER_MEMORY_LIMIT:-16G}
     memswap_limit: ${WORKER_MEMORY_LIMIT:-16G}
     mem_reservation: ${WORKER_MEMORY_RESERVATION:-8G}
@@ -286,7 +302,8 @@ services:
     restart: unless-stopped
     command: ["mcp", "python", "mcp_server.py"]
     ports:
-      - "${MCP_PORT:-8002}:8002"
+      # 仅绑定宿主机回环：MCP 供本机 Claude Desktop 等客户端使用
+      - "127.0.0.1:${MCP_PORT:-8002}:8002"
     volumes:
       - ./mcp_config.example.json:/app/backend/mcp_config.json:ro
       - ./logs/mcp:/app/logs:rw
@@ -294,10 +311,15 @@ services:
       - /etc/timezone:/etc/timezone:ro
     environment:
       - TZ=Asia/Shanghai
-      - HOST=0.0.0.0
+      - MCP_HOST=0.0.0.0
       - MCP_PORT=8002
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - API_URL=${API_URL:-http://backend:8000}
+      - API_BASE_URL=${API_BASE_URL:-http://backend:8000}
+      # MCP 访问密钥（逗号分隔）与 MCP 调后端 API 的服务凭据
+      - MCP_API_KEYS=${MCP_API_KEYS:-}
+      - TIANSHU_API_KEY=${TIANSHU_API_KEY:-}
+      - TIANSHU_ADMIN_USERNAME=${TIANSHU_ADMIN_USERNAME:-admin}
+      - TIANSHU_ADMIN_PASSWORD=${TIANSHU_ADMIN_PASSWORD}
     networks:
       - tianshu-network
     depends_on:

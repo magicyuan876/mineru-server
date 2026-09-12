@@ -7,6 +7,7 @@ MinerU Tianshu - Authentication Database
 
 import sqlite3
 import hashlib
+import json
 import secrets
 import uuid
 from contextlib import contextmanager
@@ -117,6 +118,15 @@ class AuthDB:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_key_prefix ON api_keys(prefix)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_key_user ON api_keys(user_id)")
 
+            # 已吊销 JWT 表（logout / 安全事件时写入）
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS revoked_tokens (
+                    jti TEXT PRIMARY KEY,
+                    user_id TEXT,
+                    expires_at TIMESTAMP
+                )
+            """)
+
             # 修改 tasks 表，添加 user_id 字段 (如果不存在)
             try:
                 cursor.execute("ALTER TABLE tasks ADD COLUMN user_id TEXT")
@@ -126,24 +136,76 @@ class AuthDB:
                 # 字段已存在，忽略
                 pass
 
-            # 创建默认管理员账户 (如果不存在)
+            # users 表添加 token_epoch 字段（令牌代次，改密后递增使旧令牌失效）
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN token_epoch INTEGER DEFAULT 0")
+                logger.info("✅ Added token_epoch column to users table")
+            except sqlite3.OperationalError:
+                # 字段已存在，忽略
+                pass
+
+            # api_keys 表添加 scopes 字段（JSON 数组字符串，NULL 表示不限权限）
+            try:
+                cursor.execute("ALTER TABLE api_keys ADD COLUMN scopes TEXT")
+                logger.info("✅ Added scopes column to api_keys table")
+            except sqlite3.OperationalError:
+                # 字段已存在，忽略
+                pass
+
+        # 初始管理员播种放在独立连接中执行，避免与上面的建表事务嵌套
+        self._seed_admin()
+
+    def _seed_admin(self):
+        """
+        播种初始管理员账号（幂等）
+
+        - 库中已存在 admin 或已播种过（admin_seeded 标记）时直接跳过
+        - 密码必须来自环境变量 TIANSHU_ADMIN_PASSWORD，未设置则启动失败（fail-closed）
+        """
+        import os
+
+        from .system_config import SystemConfig
+
+        with self.get_cursor() as cursor:
             cursor.execute("SELECT COUNT(*) as count FROM users WHERE role = 'admin'")
             admin_count = cursor.fetchone()["count"]
 
-            if admin_count == 0:
-                admin_id = str(uuid.uuid4())
-                admin_password = "admin123"  # 默认密码，生产环境应该修改
-                password_hash = self._hash_password(admin_password)
+        # SystemConfig 与 AuthDB 使用同一个 SQLite 文件
+        config = SystemConfig(self.db_path)
 
-                cursor.execute(
-                    """
-                    INSERT INTO users (user_id, username, email, password_hash, full_name, role)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                    (admin_id, "admin", "admin@example.com", password_hash, "System Administrator", "admin"),
-                )
-                logger.warning(f"🔐 Created default admin account: admin / {admin_password}")
-                logger.warning("⚠️  Please change the default password immediately!")
+        if admin_count > 0 or config.get_config("admin_seeded") == "true":
+            return
+
+        admin_username = os.getenv("TIANSHU_ADMIN_USERNAME", "admin")
+        admin_password = os.getenv("TIANSHU_ADMIN_PASSWORD", "")
+
+        if not admin_password:
+            raise RuntimeError(
+                "未设置 TIANSHU_ADMIN_PASSWORD 环境变量，无法创建初始管理员账号。"
+                "请设置后重启服务（如：export TIANSHU_ADMIN_PASSWORD=$(openssl rand -hex 16)）"
+            )
+
+        admin_id = str(uuid.uuid4())
+        password_hash = self._hash_password(admin_password)
+
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO users (user_id, username, email, password_hash, full_name, role)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    admin_id,
+                    admin_username,
+                    f"{admin_username}@example.com",
+                    password_hash,
+                    "System Administrator",
+                    "admin",
+                ),
+            )
+
+        config.set_config("admin_seeded", "true")
+        logger.info(f"🔐 已创建初始管理员账号 {admin_username}")
 
     @staticmethod
     def _hash_password(password: str) -> str:
@@ -327,9 +389,12 @@ class AuthDB:
             if not password_hash or not self._verify_password(old_password, password_hash):
                 raise ValueError("Incorrect old password")
 
-            # 更新密码
+            # 更新密码，同时递增令牌代次使该用户已签发的 JWT 全部失效
             new_password_hash = self._hash_password(new_password)
-            cursor.execute("UPDATE users SET password_hash = ? WHERE user_id = ?", (new_password_hash, user_id))
+            cursor.execute(
+                "UPDATE users SET password_hash = ?, token_epoch = token_epoch + 1 WHERE user_id = ?",
+                (new_password_hash, user_id),
+            )
 
             return cursor.rowcount > 0
 
@@ -339,14 +404,52 @@ class AuthDB:
             cursor.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
             return cursor.rowcount > 0
 
-    def create_api_key(self, user_id: str, name: str, expires_days: Optional[int] = None) -> Dict[str, str]:
+    def get_token_epoch(self, user_id: str) -> int:
+        """获取用户当前令牌代次（不存在时返回 0）"""
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT token_epoch FROM users WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            if row and row["token_epoch"] is not None:
+                return int(row["token_epoch"])
+            return 0
+
+    def revoke_token(self, jti: str, user_id: str, expires_at: datetime) -> None:
+        """
+        吊销指定 JWT（logout 时调用），并顺带清理已过期的吊销记录
+
+        Args:
+            jti: Token 唯一标识
+            user_id: 用户ID
+            expires_at: Token 过期时间
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "INSERT OR REPLACE INTO revoked_tokens (jti, user_id, expires_at) VALUES (?, ?, ?)",
+                (jti, user_id, expires_at.isoformat()),
+            )
+            # 已过期的 Token 本身就会验签失败，吊销记录可以清理
+            cursor.execute("DELETE FROM revoked_tokens WHERE expires_at < ?", (datetime.utcnow().isoformat(),))
+
+    def is_token_revoked(self, jti: str) -> bool:
+        """检查指定 jti 的 JWT 是否已被吊销"""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM revoked_tokens WHERE jti = ? AND expires_at > ?",
+                (jti, datetime.utcnow().isoformat()),
+            )
+            return cursor.fetchone() is not None
+
+    def create_api_key(
+        self, user_id: str, name: str, expires_days: int = 90, scopes: Optional[List[str]] = None
+    ) -> Dict[str, str]:
         """
         创建 API Key
 
         Args:
             user_id: 用户ID
             name: API Key 名称
-            expires_days: 过期天数 (None 表示永不过期)
+            expires_days: 过期天数（必须限期，默认 90 天）
+            scopes: 权限作用域列表（None 表示不限）
 
         Returns:
             dict: 包含 key_id, api_key, prefix, created_at, expires_at
@@ -361,17 +464,16 @@ class AuthDB:
 
         # 统一使用 UTC 时间
         created_at = datetime.utcnow()
-        expires_at = None
-        if expires_days:
-            expires_at = created_at + timedelta(days=expires_days)
+        expires_at = created_at + timedelta(days=expires_days)
+        scopes_json = json.dumps(scopes) if scopes is not None else None
 
         with self.get_cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO api_keys (key_id, user_id, api_key_hash, name, prefix, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO api_keys (key_id, user_id, api_key_hash, name, prefix, expires_at, scopes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-                (key_id, user_id, api_key_hash, name, prefix, expires_at.isoformat() if expires_at else None),
+                (key_id, user_id, api_key_hash, name, prefix, expires_at.isoformat(), scopes_json),
             )
 
         return {
@@ -413,7 +515,15 @@ class AuthDB:
             # 更新最后使用时间
             cursor.execute("UPDATE api_keys SET last_used = CURRENT_TIMESTAMP WHERE key_id = ?", (row["key_id"],))
 
-            return self._row_to_user(row)
+            user = self._row_to_user(row)
+            # 反序列化 API Key 作用域并挂到 User 上，供 has_permission 做细粒度限制
+            scopes_raw = row["scopes"]
+            if scopes_raw:
+                try:
+                    user.api_key_scopes = json.loads(scopes_raw)
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(f"⚠️ Invalid scopes JSON on API Key {row['key_id']}, treating as unrestricted")
+            return user
 
     def list_api_keys(self, user_id: str) -> List[Dict]:
         """列出用户的所有 API Key"""

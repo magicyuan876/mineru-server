@@ -16,7 +16,7 @@
 """
 
 from pathlib import Path
-from typing import Dict, Any
+from typing import Callable, Dict, Any
 from loguru import logger
 
 from .base_output_normalizer import BaseOutputNormalizer
@@ -26,13 +26,18 @@ from .standard_output_normalizer import StandardOutputNormalizer
 _standard_normalizer = StandardOutputNormalizer()
 
 
-def normalize_output(output_dir: Path, handle_method="standard") -> Dict[str, Any]:
+def normalize_output(
+    output_dir: Path,
+    handle_method="standard",
+    image_processor: Callable[[Path, Dict[str, Any]], None] = None,
+) -> Dict[str, Any]:
     """
     便捷函数：规范化输出目录
 
     Args:
         output_dir: 输出目录路径
         handle_method: 处理方法，目前仅支持 "standard"（StandardOutputNormalizer）
+        image_processor: 可选的图片处理回调，在本地规范化之后、RustFS 上传之前调用
 
     Returns:
         Dict[str, Any]: 规范化后的文件信息
@@ -40,7 +45,7 @@ def normalize_output(output_dir: Path, handle_method="standard") -> Dict[str, An
     output_dir = Path(output_dir)
     if handle_method == "standard":
         logger.info("🤖 Using standard output normalize method")
-        return _standard_normalizer.normalize(output_dir)
+        return _standard_normalizer.normalize(output_dir, image_processor=image_processor)
     else:
         raise ValueError(f"Unknown output_normalize handle_method: {handle_method}")
 

@@ -132,6 +132,15 @@ try:
 except ImportError as e:
     logger.info(f"ℹ️  Format Engines not available: {e}")
 
+IMAGE_CAPTION_AVAILABLE = False
+try:
+    from image_caption import ImageCaptionConfig, process_output_dir
+
+    IMAGE_CAPTION_AVAILABLE = True
+    logger.info("✅ Image Caption available")
+except ImportError as e:
+    logger.info(f"ℹ️  Image Caption not available: {e}")
+
 
 # ==============================================================================
 # 3. VLLM Container Controller
@@ -561,8 +570,20 @@ class MinerUWorkerAPI(ls.LitAPI):
 
         result = self.mineru_pipeline_engine.parse(file_path, output_path=str(output_dir), options=options)
 
+        # 图片描述处理器：管理员开启后，规范化时（RustFS 上传改 URL 之前）按文件名匹配写回 alt/img_caption
+        caption_stats = None
+
+        def caption_processor(proc_dir: Path, _norm_result: dict):
+            nonlocal caption_stats
+            caption_cfg = ImageCaptionConfig.load()
+            if caption_cfg:
+                caption_stats = process_output_dir(proc_dir, caption_cfg)
+
         actual_output = Path(result["result_path"])
-        normalize_output(actual_output)
+        normalize_output(
+            actual_output,
+            image_processor=caption_processor if IMAGE_CAPTION_AVAILABLE else None,
+        )
 
         # 扁平化目录结构
         if actual_output.resolve() != output_dir.resolve():
@@ -581,6 +602,18 @@ class MinerUWorkerAPI(ls.LitAPI):
 
         # [修复] 确保 PDF 存在并返回路径
         pdf_path = self._ensure_pdf_in_output(file_path, output_dir)
+
+        # 图片描述写回的是磁盘文件，这里刷新内存快照，保证 tasks.data 中携带描述
+        if caption_stats and caption_stats.get("captioned"):
+            try:
+                md_file = output_dir / "result.md"
+                if md_file.exists():
+                    result["markdown"] = md_file.read_text(encoding="utf-8")
+                json_file = output_dir / "result.json"
+                if json_file.exists():
+                    result["json_content"] = json.loads(json_file.read_text(encoding="utf-8"))
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to refresh captioned result: {e}")
 
         return {
             "result_path": str(output_dir),

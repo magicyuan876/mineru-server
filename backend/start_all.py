@@ -135,7 +135,6 @@ class TianshuLauncher:
                 mcp_env = os.environ.copy()
                 mcp_env["API_BASE_URL"] = f"http://localhost:{self.api_port}"
                 mcp_env["MCP_PORT"] = str(self.mcp_port)
-                mcp_env["MCP_HOST"] = "0.0.0.0"
 
                 mcp_proc = subprocess.Popen([sys.executable, "mcp_server.py"], cwd=Path(__file__).parent, env=mcp_env)
                 self.processes.append(("MCP Server", mcp_proc))

@@ -310,12 +310,7 @@ export interface EngineItem {
 }
 
 export interface EngineSystemInfo {
-  python: string
   platform: string
-  cuda: string
-  gpu: string
-  gpu_memory_gb: number | null
-  packages: Record<string, string>
 }
 
 export interface EnginesResponse {
@@ -353,4 +348,37 @@ export interface SystemConfigUpdateRequest {
   system_logo?: string
   show_github_star?: boolean
   allow_registration?: boolean
+  image_caption_enabled?: boolean
+  image_caption_api_base?: string
+  image_caption_api_key?: string
+  image_caption_model?: string
+  image_caption_prompt?: string
+  image_caption_max_images?: number
+  image_caption_concurrency?: number
+  image_caption_timeout?: number
+}
+
+// 图片描述（多模态大模型）配置
+export interface ImageCaptionConfig {
+  enabled: boolean
+  api_base: string
+  api_key: string
+  model: string
+  prompt: string
+  max_images: number
+  concurrency: number
+  timeout: number
+}
+
+// 图片描述配置响应
+export interface ImageCaptionConfigResponse {
+  success: boolean
+  config: ImageCaptionConfig
+}
+
+// 图片描述连接测试结果
+export interface ImageCaptionTestResult {
+  success: boolean
+  message: string
+  latency_ms: number
 }

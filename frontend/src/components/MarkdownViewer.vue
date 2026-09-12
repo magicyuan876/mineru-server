@@ -21,6 +21,22 @@ import 'highlight.js/styles/github.css'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import LoadingSpinner from './LoadingSpinner.vue'
+import { useAuthStore } from '@/stores'
+
+const authStore = useAuthStore()
+
+// 文件服务接口需要鉴权，<img> 无法携带请求头，为内部文件链接追加 token 查询参数
+const withAuthToken = (html: string): string => {
+  const token = authStore.token
+  if (!token) return html
+  return html.replace(
+    /(<img\b[^>]*?\bsrc=")(\/api\/v1\/files\/[^"]*)(")/g,
+    (_match, prefix, src, suffix) => {
+      const sep = src.includes('?') ? '&' : '?'
+      return `${prefix}${src}${sep}token=${encodeURIComponent(token)}${suffix}`
+    }
+  )
+}
 
 const props = defineProps<{
   content: string
@@ -98,7 +114,7 @@ const renderedContent = computed(() => {
       }
     })
 
-    return html
+    return withAuthToken(html)
   } catch (err) {
     console.error('Markdown parse error:', err)
     return '<p class="text-red-600">Markdown 解析错误</p>'

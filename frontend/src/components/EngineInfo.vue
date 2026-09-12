@@ -27,54 +27,14 @@
     </div>
 
     <template v-else-if="data">
-      <!-- 运行环境 + 核心包版本 -->
+      <!-- 运行环境 -->
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-        <!-- 核心包版本 -->
-        <div class="bg-gray-50 rounded-lg p-3">
-          <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">核心包版本</p>
-          <dl class="space-y-1">
-            <div
-              v-for="(ver, pkg) in data.system_info.packages"
-              :key="pkg"
-              class="flex items-center justify-between"
-            >
-              <dt class="text-xs text-gray-600 font-mono">{{ pkg }}</dt>
-              <dd>
-                <span
-                  :class="ver === 'N/A' ? 'bg-gray-100 text-gray-400' : 'bg-primary-50 text-primary-700'"
-                  class="text-xs font-mono px-1.5 py-0.5 rounded"
-                >{{ ver }}</span>
-              </dd>
-            </div>
-          </dl>
-        </div>
-
-        <!-- 运行环境 -->
         <div class="bg-gray-50 rounded-lg p-3">
           <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">运行环境</p>
           <dl class="space-y-1">
             <div class="flex items-center justify-between">
-              <dt class="text-xs text-gray-600">Python</dt>
-              <dd class="text-xs font-mono text-gray-800">{{ data.system_info.python }}</dd>
-            </div>
-            <div class="flex items-center justify-between">
-              <dt class="text-xs text-gray-600">CUDA</dt>
-              <dd>
-                <span
-                  :class="data.system_info.cuda === 'N/A' ? 'text-gray-400' : 'text-green-700 font-medium'"
-                  class="text-xs font-mono"
-                >{{ data.system_info.cuda }}</span>
-              </dd>
-            </div>
-            <div class="flex items-center justify-between">
-              <dt class="text-xs text-gray-600">GPU</dt>
-              <dd class="text-xs text-gray-800 text-right max-w-[140px] truncate" :title="data.system_info.gpu">
-                {{ data.system_info.gpu === 'N/A' ? '无' : data.system_info.gpu }}
-              </dd>
-            </div>
-            <div v-if="data.system_info.gpu_memory_gb" class="flex items-center justify-between">
-              <dt class="text-xs text-gray-600">显存</dt>
-              <dd class="text-xs font-mono text-gray-800">{{ data.system_info.gpu_memory_gb }} GB</dd>
+              <dt class="text-xs text-gray-600">平台</dt>
+              <dd class="text-xs font-mono text-gray-800">{{ data.system_info.platform }}</dd>
             </div>
           </dl>
         </div>

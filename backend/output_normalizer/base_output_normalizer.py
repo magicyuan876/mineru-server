@@ -3,7 +3,7 @@
 """
 
 from pathlib import Path
-from typing import Dict, Any
+from typing import Callable, Dict, Any
 from loguru import logger
 import re
 import json
@@ -26,12 +26,16 @@ class BaseOutputNormalizer:
         """
         self._rustfs_client = None
 
-    def normalize(self, output_dir: Path) -> Dict[str, Any]:
+    def normalize(
+        self, output_dir: Path, image_processor: Callable[[Path, Dict[str, Any]], None] = None
+    ) -> Dict[str, Any]:
         """
         规范化输出目录（模板方法）
 
         Args:
             output_dir: 输出目录（引擎的原始输出目录）
+            image_processor: 可选的图片处理回调，在本地文件规范化之后、RustFS 上传之前调用，
+                此时图片引用仍是 images/<原始文件名>，可按文件名匹配（用于图片描述写回等场景）
 
         Returns:
             规范化后的文件信息
@@ -52,6 +56,14 @@ class BaseOutputNormalizer:
         result.setdefault("image_count", 0)
         result.setdefault("rustfs_enabled", False)
         result.setdefault("images_uploaded", False)
+
+        # 1.5 可选图片处理钩子（如多模态大模型图片描述写回）
+        # 必须在 RustFS 上传前执行：上传后图片被重命名为短随机名，无法按文件名匹配
+        if image_processor and result["image_dir"] and result["image_count"] > 0:
+            try:
+                image_processor(output_dir, result)
+            except Exception as e:
+                logger.warning(f"⚠️  Image processor failed (continuing): {e}")
 
         # 2. 自动上传图片到 RustFS 并替换 URL（基础功能，始终启用）
         if result["image_dir"] and result["image_count"] > 0:

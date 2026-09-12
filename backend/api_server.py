@@ -12,15 +12,13 @@ import json
 import os
 import re
 import uuid
-import shutil  # ✅ 用于删除非空目录
-import mimetypes  # ✅ 用于自动识别文件类型
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote, unquote
 
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Depends, APIRouter
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, Query, Depends, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from loguru import logger
@@ -34,16 +32,10 @@ from auth import (
     require_permission,
 )
 from auth.auth_db import AuthDB
+from auth.dependencies import get_current_user_flexible
 from auth.routes import router as auth_router
 from task_db import TaskDB
-
-# ✅ [优化] 预注册 MIME 类型，防止精简环境识别失败导致浏览器强制下载
-mimetypes.add_type("application/pdf", ".pdf")
-mimetypes.add_type("image/png", ".png")
-mimetypes.add_type("image/jpeg", ".jpg")
-mimetypes.add_type("image/jpeg", ".jpeg")
-mimetypes.add_type("text/markdown", ".md")
-mimetypes.add_type("application/json", ".json")
+from utils import FilenameValidationError, ensure_within_directory, sanitize_filename
 
 # 初始化 FastAPI 应用
 app = FastAPI(
@@ -79,13 +71,32 @@ class NginxPathRewriteMiddleware:
 # 必须最先添加此中间件！
 app.add_middleware(NginxPathRewriteMiddleware)
 
-# 添加 CORS 中间件
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """兜底异常处理：对外隐藏内部细节，完整堆栈仅记录日志"""
+    logger.exception(f"❌ Unhandled exception on {request.url.path}: {exc}")
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+def _parse_allowed_origins() -> list:
+    """解析允许跨域的来源列表；未配置或含通配符时回退本地开发默认值（避免裸奔）"""
+    default_origins = ["http://localhost:3000", "http://localhost:5173"]
+    raw = os.getenv("ALLOWED_ORIGINS", ",".join(default_origins))
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    if not origins or "*" in origins:
+        logger.warning("⚠️  ALLOWED_ORIGINS 未配置或包含通配符 '*'，CORS 回退到本地开发默认来源")
+        return default_origins
+    return origins
+
+
+# 添加 CORS 中间件（不允许携带凭据，来源白名单化）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_parse_allowed_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # 获取项目根目录（backend 的父目录）
@@ -137,6 +148,29 @@ else:
     UPLOAD_DIR = (PROJECT_ROOT / "input").resolve()
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 logger.info(f"📁 Upload directory: {UPLOAD_DIR}")
+
+# 文件响应 MIME 白名单：仅 PDF 与常见图片允许内联预览，其余一律强制下载，
+# 防止用户上传的 HTML/SVG 等被浏览器内联解析造成存储型 XSS
+INLINE_MIME_TYPES = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
+
+def _build_file_response(full_path: Path) -> FileResponse:
+    """构造安全的文件下载/预览响应（MIME 白名单 + 安全响应头）"""
+    media_type = INLINE_MIME_TYPES.get(full_path.suffix.lower())
+    disposition = "inline" if media_type else "attachment"
+    headers = {
+        "Content-Disposition": f"{disposition}; filename*=utf-8''{quote(full_path.name)}",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+    }
+    return FileResponse(path=str(full_path), media_type=media_type or "application/octet-stream", headers=headers)
 
 
 # 注意：此函数已废弃，Worker 已自动上传图片到 RustFS 并替换 URL
@@ -247,9 +281,16 @@ async def submit_task(
     watermark_dilation: int = Form(10, description="水印掩码膨胀大小"),
     current_user: User = Depends(require_permission(Permission.TASK_SUBMIT)),
 ):
+    # 校验并净化文件名（路径穿越或不支持的类型直接 400）
     try:
-        unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
-        temp_file_path = UPLOAD_DIR / unique_filename
+        safe_name = sanitize_filename(file.filename or "")
+    except FilenameValidationError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid file name: {e}")
+
+    try:
+        # 落盘文件名完全由服务端生成（UUID + 白名单扩展名），不使用任何用户输入
+        unique_filename = f"{uuid.uuid4().hex}{Path(safe_name).suffix}"
+        temp_file_path = ensure_within_directory(UPLOAD_DIR / unique_filename, UPLOAD_DIR)
 
         with open(temp_file_path, "wb") as temp_file:
             while True:
@@ -308,9 +349,11 @@ async def submit_task(
             "created_at": datetime.now().isoformat(),
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Failed to submit task: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to submit task")
 
 
 @router.get("/tasks/{task_id}", tags=["任务管理"])
@@ -483,21 +526,10 @@ async def delete_task(task_id: str, current_user: User = Depends(get_current_act
         if task.get("user_id") != current_user.user_id:
             raise HTTPException(status_code=403, detail="Permission denied: You can only delete your own tasks")
 
-    # 1. 物理删除 Output 文件夹
-    output_dir = OUTPUT_DIR / task_id
-    if output_dir.exists():
-        shutil.rmtree(output_dir, ignore_errors=True)
+    # 1. 物理删除源文件与解析产物（带目录逃逸防护）
+    db.delete_task_files(task)
 
-    # 2. 物理删除 Upload 的源文件
-    if task.get("file_path"):
-        file_path = Path(task["file_path"])
-        if file_path.exists():
-            try:
-                file_path.unlink()
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to delete source file: {e}")
-
-    # 3. 从数据库彻底移除记录
+    # 2. 从数据库彻底移除记录
     with db.get_cursor() as cursor:
         cursor.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
 
@@ -510,33 +542,9 @@ async def clear_failed_tasks_endpoint(current_user: User = Depends(require_permi
     """
     【重构】一键清理所有失败的任务，包含物理清除文件
     """
-    with db.get_cursor() as cursor:
-        # 获取所有失败的任务信息
-        cursor.execute("SELECT task_id, file_path FROM tasks WHERE status = 'failed'")
-        failed_tasks = [dict(row) for row in cursor.fetchall()]
+    deleted_count = db.clear_failed_tasks()
 
-        deleted_count = 0
-        for task in failed_tasks:
-            t_id = task.get("task_id")
-            f_path = task.get("file_path")
-
-            # 删除 Output 文件夹
-            output_dir = OUTPUT_DIR / t_id
-            if output_dir.exists():
-                shutil.rmtree(output_dir, ignore_errors=True)
-
-            # 删除上传的源文件
-            if f_path and Path(f_path).exists():
-                try:
-                    Path(f_path).unlink()
-                except Exception:
-                    pass
-
-            # 从数据库中彻底删除
-            cursor.execute("DELETE FROM tasks WHERE task_id = ?", (t_id,))
-            deleted_count += 1
-
-    logger.info(f"🧹 Cleared {deleted_count} failed tasks from DB and Disk.")
+    logger.info(f"🧹 Cleared {deleted_count} failed tasks from DB and Disk by {current_user.username}.")
     return {
         "success": True,
         "deleted_count": deleted_count,
@@ -564,12 +572,8 @@ async def retry_task(task_id: str, current_user: User = Depends(get_current_acti
             raise HTTPException(status_code=403, detail="Permission denied")
 
     if db.retry_task(task_id):
-        output_dir = OUTPUT_DIR / task_id
-        if output_dir.exists():
-            try:
-                shutil.rmtree(output_dir)
-            except Exception as e:
-                logger.warning(f"Warning: Failed to clean up output directory for retried task {task_id}: {e}")
+        # 仅清理旧的解析产物，保留上传源文件供重试使用
+        db.delete_task_files(task, include_source=False)
 
         return {"success": True, "message": "Task submitted for retry"}
 
@@ -619,7 +623,7 @@ async def resume_task_endpoint(task_id: str, current_user: User = Depends(get_cu
 @router.post("/tasks/{task_id}/clear-cache", tags=["任务管理"])
 async def clear_task_cache_endpoint(task_id: str, current_user: User = Depends(get_current_active_user)):
     """
-    清理任务缓存：仅删除 output 文件夹
+    清理任务缓存：删除解析产物并标记 result_path 为已清理
     """
     task = db.get_task(task_id)
     if not task:
@@ -629,15 +633,12 @@ async def clear_task_cache_endpoint(task_id: str, current_user: User = Depends(g
         if task.get("user_id") != current_user.user_id:
             raise HTTPException(status_code=403, detail="Permission denied")
 
-    output_dir = OUTPUT_DIR / task_id
-    if output_dir.exists():
-        try:
-            shutil.rmtree(output_dir)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to delete files: {str(e)}")
-
-    if db.clear_task_cache(task_id):
-        return {"success": True, "message": "Task cache cleared, space freed"}
+    try:
+        if db.clear_task_cache(task_id):
+            return {"success": True, "message": "Task cache cleared, space freed"}
+    except Exception as e:
+        logger.error(f"❌ Failed to clear cache for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to clear cache")
 
     raise HTTPException(status_code=404, detail="Task not found")
 
@@ -743,7 +744,8 @@ async def reset_stale_tasks(
 
 
 @router.get("/engines", tags=["系统信息"])
-async def list_engines():
+async def list_engines(current_user: User = Depends(get_current_active_user)):
+    """需要认证。返回系统中所有可用的处理引擎信息。"""
     import importlib.util
     import importlib.metadata
     import sys
@@ -754,36 +756,13 @@ async def list_engines():
         except Exception:
             return "N/A"
 
-    # ── 运行环境信息 ──────────────────────────────────────────
-    cuda_version = "N/A"
-    gpu_name = "N/A"
-    gpu_memory_gb = None
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            cuda_version = torch.version.cuda or "N/A"
-            gpu_name = torch.cuda.get_device_name(0)
-            gpu_memory_gb = round(torch.cuda.get_device_properties(0).total_memory / 1024**3, 1)
-    except Exception:
-        pass
-
+    # ── 运行环境信息（仅保留平台标识，不暴露 Python/CUDA/GPU/依赖版本等内部细节）──
     system_info = {
-        "python": sys.version.split()[0],
         "platform": sys.platform,
-        "cuda": cuda_version,
-        "gpu": gpu_name,
-        "gpu_memory_gb": gpu_memory_gb,
-        "packages": {
-            "mineru": _pkg_version("mineru"),
-            "torch": _pkg_version("torch"),
-            "transformers": _pkg_version("transformers"),
-            "litserve": _pkg_version("litserve"),
-        },
     }
 
     # ── 引擎列表 ──────────────────────────────────────────────
-    mineru_ver = system_info["packages"]["mineru"]
+    mineru_ver = _pkg_version("mineru")
 
     engines = {
         "document": [
@@ -887,28 +866,29 @@ async def health_check():
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return JSONResponse(status_code=503, content={"status": "unhealthy", "error": str(e)})
+        return JSONResponse(status_code=503, content={"status": "unhealthy"})
 
 
 @router.get("/files/output/{file_path:path}", tags=["文件服务"])
-async def serve_output_file(file_path: str):
-    """提供输出文件的访问服务"""
+async def serve_output_file(file_path: str, current_user: User = Depends(get_current_user_flexible)):
+    """提供输出文件的访问服务（需认证，仅任务所有者或全局查看权限可访问）"""
     try:
         decoded_path = unquote(file_path).lstrip("/")
         full_path = (OUTPUT_DIR / decoded_path).resolve()
-
-        logger.debug(f"📥 Serving output file: {full_path}")
 
         if not full_path.is_relative_to(OUTPUT_DIR.resolve()) or not full_path.is_file():
             logger.warning(f"❌ Access denied or file not found: {full_path}")
             raise HTTPException(status_code=404, detail="File not found or access denied")
 
-        media_type, _ = mimetypes.guess_type(full_path)
-        media_type = media_type or "application/octet-stream"
+        # 归属校验：孤儿文件（任务已被删除的残留产物）仅全局查看权限可访问
+        task = db.get_task_by_output_path(decoded_path)
+        if task is None:
+            if not current_user.has_permission(Permission.TASK_VIEW_ALL):
+                raise HTTPException(status_code=403, detail="Permission denied")
+        elif task.get("user_id") != current_user.user_id and not current_user.has_permission(Permission.TASK_VIEW_ALL):
+            raise HTTPException(status_code=403, detail="Permission denied")
 
-        headers = {"Content-Disposition": f"inline; filename*=utf-8''{quote(full_path.name)}"}
-
-        return FileResponse(path=str(full_path), media_type=media_type, headers=headers)
+        return _build_file_response(full_path)
 
     except HTTPException:
         raise
@@ -918,24 +898,25 @@ async def serve_output_file(file_path: str):
 
 
 @router.get("/files/upload/{file_path:path}", tags=["文件服务"])
-async def serve_upload_file(file_path: str):
-    """提供上传源文件的访问服务"""
+async def serve_upload_file(file_path: str, current_user: User = Depends(get_current_user_flexible)):
+    """提供上传源文件的访问服务（需认证，仅任务所有者或全局查看权限可访问）"""
     try:
         decoded_path = unquote(file_path).lstrip("/")
         full_path = (UPLOAD_DIR / decoded_path).resolve()
-
-        logger.debug(f"📥 Serving upload file: {full_path}")
 
         if not full_path.is_relative_to(UPLOAD_DIR.resolve()) or not full_path.is_file():
             logger.warning(f"❌ Access denied or file not found: {full_path}")
             raise HTTPException(status_code=404, detail="File not found or access denied")
 
-        media_type, _ = mimetypes.guess_type(full_path)
-        media_type = media_type or "application/octet-stream"
+        # 归属校验：孤儿文件（任务已被删除的残留源文件）仅全局查看权限可访问
+        task = db.get_task_by_upload_path(decoded_path)
+        if task is None:
+            if not current_user.has_permission(Permission.TASK_VIEW_ALL):
+                raise HTTPException(status_code=403, detail="Permission denied")
+        elif task.get("user_id") != current_user.user_id and not current_user.has_permission(Permission.TASK_VIEW_ALL):
+            raise HTTPException(status_code=403, detail="Permission denied")
 
-        headers = {"Content-Disposition": f"inline; filename*=utf-8''{quote(full_path.name)}"}
-
-        return FileResponse(path=str(full_path), media_type=media_type, headers=headers)
+        return _build_file_response(full_path)
 
     except HTTPException:
         raise

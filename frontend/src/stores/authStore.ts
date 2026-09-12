@@ -112,7 +112,15 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * 登出
    */
-  function logout() {
+  async function logout() {
+    // 先通知后端吊销 Token，失败也不阻塞本地登出
+    if (token.value) {
+      try {
+        await authApi.logout()
+      } catch (error) {
+        console.error('Logout API error:', error)
+      }
+    }
     token.value = null
     user.value = null
     localStorage.removeItem('auth_token')

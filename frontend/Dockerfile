@@ -27,8 +27,9 @@ COPY frontend/package*.json ./
 
 # 安装依赖（NPM_REGISTRY 非空时使用指定 registry，默认 npmmirror 加速）
 # 注意：构建阶段需要 devDependencies（包括 vite, typescript, postcss 等）
+# 使用 npm ci 严格按 lock 文件安装，保证可重现
 RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi && \
-    npm install --ignore-scripts && \
+    npm ci --ignore-scripts && \
     npm cache clean --force
 
 # 复制前端源代码
@@ -68,6 +69,12 @@ server {
     location / {
         try_files $uri $uri/ /index.html;
         add_header Cache-Control "no-cache, no-store, must-revalidate";
+        # location 内一旦定义 add_header 就不会继承 server 级安全头，需在此重复
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: https: http:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data:" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     }
 
     # 静态资源缓存（排除 /api/ 路径，避免干扰后端静态文件服务）
@@ -97,6 +104,20 @@ server {
         proxy_connect_timeout 75s;
     }
 
+    # RustFS 对象存储反代（解析结果图片）
+    # RustFS 端口仅绑定宿主机回环，浏览器统一经此路径访问图片
+    # ⚠️ proxy_pass 末尾带斜杠：/s3/<bucket>/<object> → /<bucket>/<object>
+    location /s3/ {
+        proxy_pass http://rustfs:9000/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 75s;
+    }
+
     # WebSocket 支持
     location /ws/ {
         proxy_pass http://backend:8000/ws/;
@@ -113,6 +134,9 @@ server {
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
+    # img-src 放行 https:/http: 因为 RustFS 图片可能配置为外部 URL
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: https: http:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data:" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     # 隐藏 Nginx 版本
     server_tokens off;

@@ -38,11 +38,14 @@ mineru-vl-utils>=1.0.5,<2
 qwen-vl-utils<1,>=0.0.14
 
 # 3. Web 服务与 API 架构
-fastapi==0.115.6
+fastapi==0.141.1
+# 显式声明 starlette 下限：fastapi 0.141.1 仅约束 starlette>=0.46.0，
+# 需 >=1.3.1 修复安全漏洞（实测 0.141.1 与 starlette 1.6.0 兼容）
+starlette>=1.3.1
 uvicorn[standard]==0.34.0
 python-multipart>=0.0.20
 litserve==0.2.16
-aiohttp==3.11.11
+aiohttp>=3.14.3
 
 # 4. 存储、工具库与系统交互
 click>=8.1.7
@@ -67,10 +70,11 @@ openai>=1.50.0
 
 # 6. 安全、认证与协议
 pyjwt>=2.10.0
-pydantic==2.10.5
-pydantic-core==2.27.2
+# mcp>=1.28.1 要求 pydantic>=2.11，同步放开原 ==2.10.5 / ==2.27.2 锁定
+pydantic>=2.11.0
+pydantic-core>=2.33.0
 email-validator>=2.2.0
-mcp==1.1.2
+mcp==1.30.0
 sse-starlette==2.2.1
 jsonschema>=4.23.0
 jsonschema-specifications>=2024.10.0

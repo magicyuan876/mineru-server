@@ -63,9 +63,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onUnmounted, onMounted } from 'vue'
 import * as pdfjsLib from 'pdfjs-dist'
-import pdfWorker from 'pdfjs-dist/build/pdf.worker?url'
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import { useAuthStore } from '@/stores'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker
+
+const authStore = useAuthStore()
 
 const props = defineProps<{
   src: string | null
@@ -241,7 +244,11 @@ const loadPdf = async (url: string) => {
   if (pdfProxy) { pdfProxy.destroy(); pdfProxy = null }
 
   try {
-    const loadingTask = pdfjsLib.getDocument(url)
+    // 文件服务接口需要鉴权：pdf.js 通过 XHR 拉取，显式携带 Authorization 头
+    const httpHeaders: Record<string, string> = authStore.token
+      ? { Authorization: `Bearer ${authStore.token}` }
+      : {}
+    const loadingTask = pdfjsLib.getDocument({ url, httpHeaders, isEvalSupported: false })
     loadingTask.onProgress = (p) => { if (p.total) progress.value = 10 + (p.loaded / p.total) * 60 }
     pdfProxy = await loadingTask.promise
     totalPages.value = pdfProxy.numPages

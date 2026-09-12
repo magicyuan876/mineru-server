@@ -54,6 +54,7 @@ mineru-tianshu/
 │   ├── video_engines/         # 视频引擎（FFmpeg + 关键帧提取，OCR 走 MinerU）
 │   ├── format_engines/        # 插件化格式引擎（FASTA、GenBank 为参考实现）
 │   ├── remove_watermark/      # 水印去除（YOLO11x + LaMa）
+│   ├── image_caption/         # 图片描述（多模态大模型，OpenAI 兼容接口，配置存 system_config 表）
 │   ├── output_normalizer/     # 输出标准化（统一 result.md/result.json/images/）
 │   ├── storage/               # RustFS S3 客户端（图片上传、URL 替换）
 │   ├── utils/                 # 工具函数
@@ -159,6 +160,7 @@ npm run build     # tsc && vite build → dist/
 ### 输出契约
 
 - 每个引擎的原始输出目录都经过 `output_normalizer.normalize_output(dir, handle_method)`，统一为 `result.md` / `result.json` / `images/`；随后图片上传 RustFS 并把 Markdown/JSON 中的图片路径改写为公开 URL。
+- `normalize_output` 支持可选 `image_processor` 回调，在本地规范化之后、RustFS 上传之前执行（此时图片引用仍是原始文件名，可精确匹配）。MinerU 路径用它实现**图片描述**：管理员在系统配置页开启并配置多模态大模型（OpenAI 兼容接口，配置存 `system_config` 表，`image_caption_*` 键，Worker 每次任务实时读取），`image_caption/` 模块并发调用模型为图片生成描述，写回 result.md 的图片 alt 与 result.json 的 `img_caption`；失败只降级不影响任务。api_key 接口返回掩码 `"********"`，发回掩码表示不修改。
 - Worker 写入 `tasks.data` 列的 JSON 包含前端依赖的键：`pdf_path`（左侧 PDF 预览）、`json_content`（右侧版面渲染）、`markdown`、`markdown_file`。**重命名这些键会破坏 `TaskDetail.vue`**。
 
 ### 大 PDF 父子任务
@@ -191,7 +193,9 @@ npm run build     # tsc && vite build → dist/
 
 - `MAX_CONCURRENT_TASKS > 1` 时必须显式设置 `MINERU_VIRTUAL_VRAM_SIZE = 单卡显存 / MAX_CONCURRENT_TASKS`，否则每个 Worker 进程都按整卡规划 batch → CUDA OOM。
 - `WORKER_MEMORY_LIMIT` 需随进程数放大（约每进程 8G），`setup.sh` 会自动计算。
-- `RUSTFS_ENABLED=true` 时 `RUSTFS_PUBLIC_URL` 必须为外部可访问的完整 URL。
+- `RUSTFS_ENABLED=true` 时 `RUSTFS_PUBLIC_URL` 必须为浏览器可达的完整 URL；RustFS 端口仅绑定宿主机回环（127.0.0.1），图片默认经前端 nginx `/s3/` 路径反代（如 `http://<服务器IP>/s3`）。
+- 后端容器以非 root 用户 `tianshu`（UID 10001）运行，挂载到 `/app/data`、`/app/logs` 的宿主机目录必须对其可写（`setup.sh` 的 `create_directories` 会做 best-effort `chmod`）；Worker 例外，因挂载 `/var/run/docker.sock` 在 compose 中保持 `user: root`。
+- 全新部署必须设置 `TIANSHU_ADMIN_PASSWORD`（可选 `TIANSHU_ADMIN_USERNAME`，默认 admin），否则 API 服务拒绝启动；`setup.sh` 会自动生成随机密码写入 `.env`。
 - 模型权重在 `models/`，运行时数据在 `data/{uploads,output,db}`，日志在 `logs/{backend,worker,mcp}`。
 
 ## 代码风格
@@ -232,7 +236,7 @@ pre-commit 钩子包含：基础文件检查（大文件 >5MB、私钥、冲突�
 
 - **JWT_SECRET_KEY** 生产环境必须改为随机字符串：`openssl rand -hex 32`。
 - `.env` 文件含密钥，已 gitignore，**不要提交或读取后外泄**；示例配置请提交到 `.env.example`。
-- RustFS 默认凭据 `rustfsadmin/rustfsadmin` 需在 `.env` 中修改。
+- RustFS 无默认凭据：`RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` 必须显式设置（compose 用 `:?` 强制，`setup.sh` 自动生成随机值）。
 - API Key 认证与 JWT 并存，新增端点记得挂 `get_current_user` / 权限依赖。
 - 文件服务端点必须保留路径逃逸防护（`is_relative_to(OUTPUT_DIR)`）。
 - pre-commit 会检查私钥与 >5MB 大文件。

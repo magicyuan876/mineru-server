@@ -125,11 +125,21 @@ COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY scripts/init-models.sh /usr/local/bin/init-models.sh
 
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/init-models.sh && \
-    mkdir -p /app/models /app/data/uploads /app/data/output /app/logs
+    mkdir -p /app/models /app/data/uploads /app/data/output /app/data/db /app/logs
+
+# 非 root 运行用户（worker 服务因挂载 /var/run/docker.sock，在 compose 中显式覆盖为 root）
+RUN groupadd -g 10001 tianshu && \
+    useradd -u 10001 -g tianshu -m -s /bin/bash tianshu && \
+    chown -R tianshu:tianshu /app /home/tianshu
+
+# USER 指令不会自动设置 HOME，显式指定以兼容 ~/.cache、~/mineru.json 等路径解析
+ENV HOME=/home/tianshu
 
 WORKDIR /app/backend
 
 EXPOSE 8000 8001 8002
+
+USER tianshu
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["api", "python", "api_server.py"]

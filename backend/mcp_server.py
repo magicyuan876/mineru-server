@@ -14,28 +14,121 @@ MinerU Tianshu - MCP Server
 """
 
 import asyncio
+import base64
+import hmac
+import ipaddress
 import json
 import os
+import re
+import socket
 import sys
-from typing import Any
+import uuid
 from pathlib import Path
-import base64
+from typing import Any
+from urllib.parse import urlparse
 
+import aiohttp
+import uvicorn
+from loguru import logger
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
-from mcp.types import Tool, TextContent
+from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import TextContent, Tool
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
 from starlette.routing import Route
-import aiohttp
-from loguru import logger
+
+from utils import FilenameValidationError, ensure_within_directory, sanitize_filename
 
 # 文件大小限制（从环境变量读取，0 表示不限制）
 MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE", "0"))  # 0 = 不限制
 MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024) if MAX_FILE_SIZE_BYTES > 0 else 0
-import uvicorn
+
+# URL 下载响应体上限（流式读取超限即中止，防止内存被打爆）
+MAX_DOWNLOAD_SIZE_BYTES = 200 * 1024 * 1024
 
 # API 配置（从环境变量读取）
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+
+# MCP 访问后端 API 的服务凭据（API 开启认证后必须配置，否则后端接口一律 401）
+TIANSHU_API_KEY = os.getenv("TIANSHU_API_KEY", "")
+
+# MCP 服务自身的访问密钥（逗号分隔），/sse 与 /messages 强制校验；为空时拒绝一切请求
+MCP_API_KEYS = [key.strip() for key in os.getenv("MCP_API_KEYS", "").split(",") if key.strip()]
+
+
+def _api_headers() -> dict:
+    """访问后端 API 时携带的服务凭据请求头"""
+    return {"X-API-Key": TIANSHU_API_KEY} if TIANSHU_API_KEY else {}
+
+
+def _error_response(message: str) -> list[TextContent]:
+    """统一的错误响应：固定文案，不回显 URL、状态码、异常详情等内部信息"""
+    return [TextContent(type="text", text=json.dumps({"error": message}, indent=2))]
+
+
+def _validate_download_url(url: str) -> None:
+    """下载目标校验（SSRF 防护）：仅允许 http/https，且解析出的所有 IP 必须为公网地址
+
+    注意：校验通过后 aiohttp 建连时会再次进行 DNS 解析，仍存在 DNS 重绑定的
+    残余风险，已通过"一次性解析校验 + allow_redirects=False"尽量收敛。
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Only http/https URLs are allowed")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("URL must contain a hostname")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        addr_infos = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as e:
+        raise ValueError("Failed to resolve hostname") from e
+    for info in addr_infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            raise ValueError("URL resolves to a non-public address")
+
+
+class MCPAuthMiddleware:
+    """Pure ASGI 鉴权中间件：/sse 与 /messages 强制校验密钥，其余路径（/health、/）公开
+
+    密钥来源：请求头 X-API-Key 或 Authorization: Bearer <key>，
+    与环境变量 MCP_API_KEYS（逗号分隔）中的密钥做常量时间比较。
+    MCP_API_KEYS 为空时任何密钥都无法通过，受保护端点一律 401。
+    """
+
+    PROTECTED_PATHS = ("/sse", "/messages")
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path", "") not in self.PROTECTED_PATHS:
+            await self.app(scope, receive, send)
+            return
+
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        provided = headers.get("x-api-key", "")
+        if not provided:
+            authorization = headers.get("authorization", "")
+            if authorization.lower().startswith("bearer "):
+                provided = authorization[len("bearer ") :].strip()
+
+        if provided and any(hmac.compare_digest(provided, key) for key in MCP_API_KEYS):
+            await self.app(scope, receive, send)
+            return
+
+        logger.warning(f"🔒 Unauthorized MCP access from {scope.get('client')}")
+        await JSONResponse({"error": "Unauthorized"}, status_code=401)(scope, receive, send)
+
 
 # 初始化 MCP Server
 app = Server("mineru-tianshu")
@@ -210,11 +303,11 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         elif name == "get_queue_stats":
             return await get_queue_stats(arguments)
         else:
-            return [TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}, indent=2))]
+            return _error_response(f"Unknown tool: {name}")
     except Exception as e:
         logger.error(f"❌ Tool call failed: {name}, error: {e}")
         logger.exception(e)
-        return [TextContent(type="text", text=json.dumps({"error": str(e), "tool": name}, indent=2))]
+        return _error_response("Tool execution failed")
 
 
 async def parse_document(args: dict) -> list[TextContent]:
@@ -234,13 +327,14 @@ async def parse_document(args: dict) -> list[TextContent]:
                     # This is legitimate business logic, not code obfuscation
                     file_content = base64.b64decode(args["file_base64"])
                 except Exception as e:
-                    return [
-                        TextContent(
-                            type="text", text=json.dumps({"error": f"Invalid base64 encoding: {str(e)}"}, indent=2)
-                        )
-                    ]
+                    logger.warning(f"Invalid base64 payload: {e}")
+                    return _error_response("Invalid base64 encoding")
 
-                file_name = args["file_name"]
+                try:
+                    file_name = sanitize_filename(args["file_name"])
+                except FilenameValidationError:
+                    logger.warning(f"🔒 Rejected unsafe file name: {args['file_name']!r}")
+                    return _error_response("Invalid file name")
 
                 # 检查文件大小（如果设置了限制）
                 size_mb = len(file_content) / (1024 * 1024)
@@ -259,15 +353,14 @@ async def parse_document(args: dict) -> list[TextContent]:
 
                 logger.info(f"📦 File: {file_name}, Size: {size_mb:.2f}MB")
 
-                # 创建临时文件（使用共享上传目录）
-                import uuid
-                import os
-
+                # 创建临时文件（使用共享上传目录，随机文件名 + 白名单扩展名）
                 project_root = Path(__file__).parent.parent
                 default_upload = project_root / "data" / "uploads"
                 upload_dir = Path(os.getenv("UPLOAD_PATH", str(default_upload)))
                 upload_dir.mkdir(parents=True, exist_ok=True)
-                temp_file_path = upload_dir / f"{uuid.uuid4().hex}_{file_name}"
+                temp_file_path = ensure_within_directory(
+                    upload_dir / f"{uuid.uuid4().hex}{Path(file_name).suffix}", upload_dir
+                )
                 temp_file_path.write_bytes(file_content)
                 file_data = open(temp_file_path, "rb")
 
@@ -276,33 +369,44 @@ async def parse_document(args: dict) -> list[TextContent]:
                 url = args["file_url"]
                 logger.info(f"🌐 Downloading file from URL: {url}")
 
+                # SSRF 防护：先校验 scheme 与解析 IP，失败时仅返回固定文案
                 try:
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                    _validate_download_url(url)
+                except ValueError as e:
+                    logger.warning(f"🔒 Rejected download URL {url}: {e}")
+                    return _error_response("Failed to download file")
+
+                try:
+                    # 禁止跟随重定向，防止重定向绕过目标校验
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=60), allow_redirects=False) as resp:
                         if resp.status != 200:
-                            return [
-                                TextContent(
-                                    type="text",
-                                    text=json.dumps(
-                                        {"error": f"Failed to download file from {url}", "status_code": resp.status},
-                                        indent=2,
-                                    ),
-                                )
-                            ]
+                            logger.warning(f"Download failed: HTTP {resp.status}")
+                            return _error_response("Failed to download file")
 
                         # 从 URL 推断文件名
-                        file_name = Path(url).name or "downloaded_file"
+                        file_name = Path(urlparse(url).path).name or "downloaded_file"
 
-                        # 尝试从 Content-Disposition 获取文件名
+                        # 尝试从 Content-Disposition 获取文件名（剔除引号/分隔符/路径穿越字符）
                         if "content-disposition" in resp.headers:
-                            import re
-
                             cd = resp.headers["content-disposition"]
-                            match = re.search(r'filename[*]?=["\']?([^"\';\r\n]+)', cd)
+                            match = re.search(r'filename[*]?=["\']?([^"\';\r\n/\\]+)', cd)
                             if match:
-                                file_name = match.group(1)
+                                file_name = match.group(1).strip()
 
-                        # 下载到临时文件
-                        file_content = await resp.read()
+                        try:
+                            file_name = sanitize_filename(file_name)
+                        except FilenameValidationError:
+                            logger.warning(f"🔒 Rejected downloaded file name: {file_name!r}")
+                            return _error_response("Failed to download file")
+
+                        # 流式读取并设上限，超限中止，防止超大响应打爆内存
+                        buffer = bytearray()
+                        async for chunk in resp.content.iter_chunked(1024 * 1024):
+                            buffer.extend(chunk)
+                            if len(buffer) > MAX_DOWNLOAD_SIZE_BYTES:
+                                logger.warning("Download aborted: response exceeds 200MB limit")
+                                return _error_response("Downloaded file too large")
+                        file_content = bytes(buffer)
                         size_mb = len(file_content) / (1024 * 1024)
 
                         if MAX_FILE_SIZE_BYTES > 0 and size_mb > MAX_FILE_SIZE_MB:
@@ -320,30 +424,23 @@ async def parse_document(args: dict) -> list[TextContent]:
 
                         logger.info(f"📦 Downloaded: {file_name}, Size: {size_mb:.2f}MB")
 
-                        # 创建临时文件（使用共享上传目录）
-                        import uuid
-                        import os
-
+                        # 创建临时文件（使用共享上传目录，随机文件名 + 白名单扩展名）
                         project_root = Path(__file__).parent.parent
                         default_upload = project_root / "data" / "uploads"
                         upload_dir = Path(os.getenv("UPLOAD_PATH", str(default_upload)))
                         upload_dir.mkdir(parents=True, exist_ok=True)
-                        temp_file_path = upload_dir / f"{uuid.uuid4().hex}_{file_name}"
+                        temp_file_path = ensure_within_directory(
+                            upload_dir / f"{uuid.uuid4().hex}{Path(file_name).suffix}", upload_dir
+                        )
                         temp_file_path.write_bytes(file_content)
                         file_data = open(temp_file_path, "rb")
 
                 except asyncio.TimeoutError:
-                    return [
-                        TextContent(
-                            type="text", text=json.dumps({"error": f"Timeout downloading file from {url}"}, indent=2)
-                        )
-                    ]
+                    logger.warning(f"Timeout downloading file from {url}")
+                    return _error_response("Failed to download file")
                 except Exception as e:
-                    return [
-                        TextContent(
-                            type="text", text=json.dumps({"error": f"Failed to download file: {str(e)}"}, indent=2)
-                        )
-                    ]
+                    logger.warning(f"Failed to download file from {url}: {e}")
+                    return _error_response("Failed to download file")
 
             else:
                 return [
@@ -364,7 +461,9 @@ async def parse_document(args: dict) -> list[TextContent]:
 
             logger.info(f"📤 Submitting task for: {file_name}")
 
-            async with session.post(f"{API_BASE_URL}/api/v1/tasks/submit", data=form_data) as resp:
+            async with session.post(
+                f"{API_BASE_URL}/api/v1/tasks/submit", data=form_data, headers=_api_headers()
+            ) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     return [
@@ -406,7 +505,7 @@ async def parse_document(args: dict) -> list[TextContent]:
             elapsed = 0
 
             while elapsed < max_wait:
-                async with session.get(f"{API_BASE_URL}/api/v1/tasks/{task_id}") as resp:
+                async with session.get(f"{API_BASE_URL}/api/v1/tasks/{task_id}", headers=_api_headers()) as resp:
                     if resp.status != 200:
                         return [
                             TextContent(
@@ -539,7 +638,7 @@ async def get_task_status(args: dict) -> list[TextContent]:
     logger.info(f"📊 Querying task status: {task_id}")
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(f"{API_BASE_URL}/api/v1/tasks/{task_id}") as resp:
+        async with session.get(f"{API_BASE_URL}/api/v1/tasks/{task_id}", headers=_api_headers()) as resp:
             if resp.status == 404:
                 return [TextContent(type="text", text=json.dumps({"error": f"Task not found: {task_id}"}, indent=2))]
 
@@ -591,7 +690,7 @@ async def list_tasks(args: dict) -> list[TextContent]:
         params["status"] = status
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(f"{API_BASE_URL}/api/v1/queue/tasks", params=params) as resp:
+        async with session.get(f"{API_BASE_URL}/api/v1/queue/tasks", params=params, headers=_api_headers()) as resp:
             if resp.status != 200:
                 return [TextContent(type="text", text=json.dumps({"error": "Failed to list tasks"}, indent=2))]
 
@@ -629,7 +728,7 @@ async def get_queue_stats(args: dict) -> list[TextContent]:
     logger.info("📊 Getting queue stats")
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(f"{API_BASE_URL}/api/v1/queue/stats") as resp:
+        async with session.get(f"{API_BASE_URL}/api/v1/queue/stats", headers=_api_headers()) as resp:
             if resp.status != 200:
                 return [TextContent(type="text", text=json.dumps({"error": "Failed to get queue stats"}, indent=2))]
 
@@ -673,8 +772,29 @@ async def main():
     logger.info("=" * 60)
     logger.info(f"📡 API Base URL: {API_BASE_URL}")
 
-    # 创建 SSE Transport
-    sse = SseServerTransport("/messages")
+    # 从环境变量读取配置（默认仅监听回环地址，避免未认证暴露到公网）
+    host = os.getenv("MCP_HOST", "127.0.0.1")
+    port = int(os.getenv("MCP_PORT", "8002"))
+
+    if not MCP_API_KEYS:
+        logger.warning("⚠️ MCP_API_KEYS 未配置：/sse 与 /messages 将对所有请求返回 401")
+
+    # 创建 SSE Transport，启用 DNS 重绑定 / Host / Origin 防护
+    security_settings = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[f"{host}:*", "localhost:*", "127.0.0.1:*", "[::1]:*"],
+        allowed_origins=[
+            f"http://{host}:*",
+            f"https://{host}:*",
+            "http://localhost:*",
+            "https://localhost:*",
+            "http://127.0.0.1:*",
+            "https://127.0.0.1:*",
+            "http://[::1]:*",
+            "https://[::1]:*",
+        ],
+    )
+    sse = SseServerTransport("/messages", security_settings=security_settings)
 
     # SSE 处理函数
     async def handle_sse(request):
@@ -685,10 +805,8 @@ async def main():
     async def handle_messages(request):
         await sse.handle_post_message(request.scope, request.receive, request._send)
 
-    # 健康检查端点
+    # 健康检查端点（公开，不泄露内部配置）
     async def health_check(request):
-        from starlette.responses import JSONResponse
-
         return JSONResponse(
             {
                 "status": "healthy",
@@ -696,11 +814,10 @@ async def main():
                 "version": "1.0.0",
                 "endpoints": {"sse": "/sse", "messages": "/messages (POST)", "health": "/health"},
                 "tools": ["parse_document", "get_task_status", "list_tasks", "get_queue_stats"],
-                "api_base_url": API_BASE_URL,
             }
         )
 
-    # 创建 Starlette 应用
+    # 创建 Starlette 应用，受保护端点外挂鉴权中间件
     starlette_app = Starlette(
         routes=[
             Route("/sse", endpoint=handle_sse),
@@ -709,10 +826,7 @@ async def main():
             Route("/", endpoint=health_check, methods=["GET"]),  # 根路径也返回健康检查
         ]
     )
-
-    # 从环境变量读取配置
-    host = os.getenv("MCP_HOST", "0.0.0.0")
-    port = int(os.getenv("MCP_PORT", "8002"))
+    starlette_app = MCPAuthMiddleware(starlette_app)
 
     logger.info(f"🌐 MCP Server listening on http://{host}:{port}")
     logger.info(f"📡 SSE endpoint: http://{host}:{port}/sse")

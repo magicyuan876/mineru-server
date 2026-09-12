@@ -174,6 +174,14 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/init-models.sh
 # 创建必要的目录
 RUN mkdir -p /app/models /app/data /app/uploads /app/output /app/logs
 
+# 非 root 运行用户
+RUN groupadd -g 10001 tianshu && \
+    useradd -u 10001 -g tianshu -m -s /bin/bash tianshu && \
+    chown -R tianshu:tianshu /app /home/tianshu
+
+# USER 指令不会自动设置 HOME，显式指定以兼容 ~/.cache、~/mineru.json 等路径解析
+ENV HOME=/home/tianshu
+
 # 设置工作目录为后端
 WORKDIR /app/backend
 
@@ -186,6 +194,8 @@ EXPOSE 8000 8001 8002
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
+
+USER tianshu
 
 # 使用 entrypoint 脚本
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
