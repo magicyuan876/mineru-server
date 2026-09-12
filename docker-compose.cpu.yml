@@ -64,8 +64,8 @@ services:
       args:
         APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
         PIP_MIRROR: ${PIP_MIRROR:-https://pypi.tuna.tsinghua.edu.cn/simple}
-      cache_from:
-        - tianshu-backend-cpu:latest
+      # 不自引用 cache_from：该 tag 正是本次构建的输出，构建中断过之后会引用到
+      # 已不存在的父层（理由详见 docker-compose.yml）。
     image: tianshu-backend-cpu:latest
     container_name: tianshu-backend-cpu
     platform: linux/amd64
@@ -176,8 +176,8 @@ services:
       args:
         APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
         PIP_MIRROR: ${PIP_MIRROR:-https://pypi.tuna.tsinghua.edu.cn/simple}
-      cache_from:
-        - tianshu-backend-cpu:latest
+      # 不自引用 cache_from：该 tag 正是本次构建的输出，构建中断过之后会引用到
+      # 已不存在的父层（理由详见 docker-compose.yml）。
     image: tianshu-backend-cpu:latest
     container_name: tianshu-worker-cpu
     platform: linux/amd64
@@ -290,8 +290,8 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
-      cache_from:
-        - tianshu-frontend:latest
+      # 不自引用 cache_from：该 tag 正是本次构建的输出，构建中断过之后会引用到
+      # 已不存在的父层（理由详见 docker-compose.yml）。
     image: tianshu-frontend:latest
     container_name: tianshu-frontend-cpu
     platform: linux/amd64
