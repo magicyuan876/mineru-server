@@ -231,12 +231,10 @@ def process_markdown_images_legacy(md_content: str, image_dir: Path, result_path
 
 @app.get("/", tags=["系统信息"])
 async def root():
-    """API根路径"""
+    """API根路径（公开端点，不返回版本号等可被用于漏洞指纹匹配的信息）"""
     return {
         "service": "MinerU Tianshu",
-        "version": "2.0.0",
         "description": "天枢 - 企业级 AI 数据预处理平台",
-        "features": "文档、图片、音频、视频等多模态数据处理",
         "docs": "/docs",
     }
 
@@ -885,14 +883,14 @@ def list_engines(current_user: User = Depends(get_current_active_user)):
 
 @router.get("/health", tags=["系统信息"])
 def health_check():
+    """健康检查（无需鉴权，供容器 healthcheck / 负载均衡探针使用）
+
+    返回体刻意保持最小化：不带队列统计、组件状态、异常细节等任何内部信息，
+    避免未鉴权端点成为信息收集入口。详细统计走需授权的 /queue/stats。
+    """
     try:
-        stats = db.get_queue_stats()
-        return {
-            "status": "healthy",
-            "timestamp": datetime.now().isoformat(),
-            "database": "connected",
-            "queue_stats": stats,
-        }
+        db.ping()
+        return {"status": "healthy"}
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return JSONResponse(status_code=503, content={"status": "unhealthy"})

@@ -529,6 +529,12 @@ class TaskDB:
             task = cursor.fetchone()
             return dict(task) if task else None
 
+    def ping(self) -> bool:
+        """数据库探活，供未鉴权的 /health 使用：只验证连接可用，不返回任何内部数据"""
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT 1")
+        return True
+
     def get_queue_stats(self) -> Dict[str, int]:
         """获取队列统计信息"""
         with self.get_cursor() as cursor:

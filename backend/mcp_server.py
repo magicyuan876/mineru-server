@@ -805,17 +805,9 @@ async def main():
     async def handle_messages(request):
         await sse.handle_post_message(request.scope, request.receive, request._send)
 
-    # 健康检查端点（公开，不泄露内部配置）
+    # 健康检查端点（公开，不返回版本号、工具列表、端点结构等可被用于信息收集的内容）
     async def health_check(request):
-        return JSONResponse(
-            {
-                "status": "healthy",
-                "service": "MinerU Tianshu MCP Server",
-                "version": "1.0.0",
-                "endpoints": {"sse": "/sse", "messages": "/messages (POST)", "health": "/health"},
-                "tools": ["parse_document", "get_task_status", "list_tasks", "get_queue_stats"],
-            }
-        )
+        return JSONResponse({"status": "healthy"})
 
     # 创建 Starlette 应用，受保护端点外挂鉴权中间件
     starlette_app = Starlette(

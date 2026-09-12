@@ -184,7 +184,7 @@ npm run build     # tsc && vite build → dist/
 
 ### API 概览
 
-`api_server.py` 提供 `/api/v1/*`（任务提交/查询/取消/重试/暂停/恢复/清缓存、队列统计、管理员清理与超时重置、`/engines`、`/health`、文件服务），认证路由在 `/api/v1/auth/*`。交互文档：`http://localhost:8000/docs`（前端内嵌 Scalar 版 ApiDocsScalar.vue）。文件服务端点会校验路径 `is_relative_to(OUTPUT_DIR)`，新增接收路径的端点必须保留此防护。
+`api_server.py` 提供 `/api/v1/*`（任务提交/查询/取消/重试/暂停/恢复/清缓存、队列统计、管理员清理与超时重置、`/engines`、`/health`、文件服务），认证路由在 `/api/v1/auth/*`。交互文档：`http://localhost:8000/docs`（前端内嵌 Scalar 版 ApiDocsScalar.vue）。文件服务端点会校验路径 `is_relative_to(OUTPUT_DIR)`，新增接收路径的端点必须保留此防护。`/health`（及 MCP Server 的 `/health`）无需鉴权，供容器探针使用——只返回 `{"status": "healthy"}`，不得加入版本号、队列统计、组件状态等任何内部信息（详细统计走需授权的 `/queue/stats`）；同理根路径 `/` 不返回版本号。
 
 ## 配置
 
