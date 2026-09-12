@@ -12,6 +12,10 @@
 
       <div class="flex items-center gap-3">
         <template v-if="task">
+            <button v-if="['pending', 'processing', 'paused'].includes(task.status)" @click="initiateAction('cancel')" :disabled="actionLoading" class="btn btn-white text-gray-600 border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 btn-sm flex items-center shadow-sm transition-all disabled:opacity-50" title="取消任务（保留任务记录）">
+              <XCircle :class="{'animate-pulse': actionLoading && currentAction === 'cancel'}" class="w-4 h-4 mr-1.5" />
+              <span>取消任务</span>
+            </button>
             <button v-if="task.status === 'failed'" @click="initiateAction('retry')" :disabled="actionLoading" class="btn btn-white text-blue-600 border-gray-200 hover:bg-blue-50 btn-sm flex items-center shadow-sm transition-all disabled:opacity-50">
               <RotateCw :class="{'animate-spin': actionLoading && currentAction === 'retry'}" class="w-4 h-4 mr-1.5" />
               <span>重试任务</span>
@@ -147,7 +151,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useTaskStore } from '@/stores'
-import { ArrowLeft, AlertCircle, RefreshCw, FileText, Columns, Download, RotateCw, Eraser, Pause, Image, Table, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, AlertCircle, RefreshCw, FileText, Columns, Download, RotateCw, Eraser, Pause, Image, Table, Trash2, XCircle } from 'lucide-vue-next'
 import StatusBadge from '@/components/StatusBadge.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import MarkdownViewer from '@/components/MarkdownViewer.vue'
@@ -319,9 +323,9 @@ const showConfirm = ref(false)
 const confirmTitle = ref('')
 const confirmMessage = ref('')
 const confirmType = ref<'info' | 'warning' | 'danger'>('info')
-const currentAction = ref<'retry' | 'clearCache' | 'delete' | null>(null)
+const currentAction = ref<'retry' | 'clearCache' | 'delete' | 'cancel' | null>(null)
 
-function initiateAction(action: 'retry' | 'clearCache' | 'delete') {
+function initiateAction(action: 'retry' | 'clearCache' | 'delete' | 'cancel') {
   currentAction.value = action
   if (action === 'retry') {
     confirmTitle.value = '重试任务'; confirmMessage.value = '确定重试吗？'; confirmType.value = 'info'
@@ -329,6 +333,8 @@ function initiateAction(action: 'retry' | 'clearCache' | 'delete') {
     confirmTitle.value = '清理缓存'; confirmMessage.value = '确定清理吗？'; confirmType.value = 'warning'
   } else if (action === 'delete') {
     confirmTitle.value = '删除任务'; confirmMessage.value = '彻底删除该任务及文件？不可恢复。'; confirmType.value = 'danger'
+  } else if (action === 'cancel') {
+    confirmTitle.value = '取消任务'; confirmMessage.value = '确定取消该任务吗？已产生的处理结果将被保留。'; confirmType.value = 'warning'
   }
   showConfirm.value = true
 }
@@ -343,6 +349,8 @@ async function executeAction() {
       await taskStore.clearTaskCache(taskId.value); await refreshTask();
     } else if (currentAction.value === 'delete') {
       await taskStore.deleteTask(taskId.value); router.back();
+    } else if (currentAction.value === 'cancel') {
+      await taskStore.cancelTask(taskId.value); await refreshTask();
     }
   } catch (err: any) { error.value = err.message || 'Action failed' }
   finally { actionLoading.value = false; currentAction.value = null }

@@ -580,6 +580,28 @@ async def retry_task(task_id: str, current_user: User = Depends(get_current_acti
     raise HTTPException(status_code=404, detail="Task not found")
 
 
+@router.post("/tasks/{task_id}/cancel", tags=["任务管理"])
+async def cancel_task_endpoint(task_id: str, current_user: User = Depends(get_current_active_user)):
+    """
+    取消任务：仅对 pending / processing / paused 状态的任务生效
+    """
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # 🚨 修复属性名称错误
+    if not current_user.has_permission(Permission.TASK_DELETE_ALL):
+        if task.get("user_id") != current_user.user_id:
+            raise HTTPException(status_code=403, detail="Permission denied")
+
+    if db.cancel_task(task_id):
+        return {"success": True, "message": "Task cancelled"}
+
+    raise HTTPException(
+        status_code=409, detail="Task cannot be cancelled (must be in pending/processing/paused status)"
+    )
+
+
 @router.post("/tasks/{task_id}/pause", tags=["任务管理"])
 async def pause_task_endpoint(task_id: str, current_user: User = Depends(get_current_active_user)):
     """

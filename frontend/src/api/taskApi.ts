@@ -98,10 +98,10 @@ export async function getTaskStatus(
 }
 
 /**
- * 取消任务
+ * 取消任务 (仅 pending/processing/paused 状态有效，区别于彻底删除)
  */
 export async function cancelTask(taskId: string): Promise<ApiResponse> {
-  const response = await apiClient.delete<ApiResponse>(`/api/v1/tasks/${taskId}`)
+  const response = await apiClient.post<ApiResponse>(`/api/v1/tasks/${taskId}/cancel`)
   return response.data
 }
 
