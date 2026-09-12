@@ -21,6 +21,7 @@ ALLOWED_UPLOAD_EXTENSIONS = {
     ".txt",
     ".csv",
     ".md",
+    ".epub",
     # 图片
     ".jpg",
     ".jpeg",
@@ -52,6 +53,8 @@ ALLOWED_UPLOAD_EXTENSIONS = {
     ".gbk",
     ".genbank",
     ".gbff",
+    # 压缩包（Worker 解包后按父子任务批量解析）
+    ".zip",
 }
 
 # Windows 保留字符与控制字符

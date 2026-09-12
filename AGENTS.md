@@ -7,7 +7,7 @@
 
 MinerU Tianshu（天枢）是一个**企业级 AI 数据预处理平台**，将非结构化数据转换为 AI 可用的结构化格式（Markdown + JSON）：
 
-- 📄 文档：PDF、Word、Excel、PPT（MinerU 原生解析 DOCX/XLSX/PPTX；旧版 .doc/.xls/.ppt 经 LibreOffice 转换）、HTML/TXT/CSV（MarkItDown）
+- 📄 文档：PDF、Word、Excel、PPT（MinerU 原生解析 DOCX/XLSX/PPTX；旧版 .doc/.xls/.ppt 经 LibreOffice 转换）、HTML/TXT/CSV/EPUB（MarkItDown）、ZIP 压缩包（自动解包为父子任务批量解析）
 - 🖼️ 图片：JPG、PNG、BMP、TIFF（多 OCR 引擎 + 水印去除🧪）
 - 🎙️ 音频：MP3、WAV、M4A、FLAC（SenseVoice 多语言、说话人识别、情感识别）
 - 🎬 视频：MP4、AVI、MKV、MOV、WebM（FFmpeg 音频提取转写 + 关键帧 OCR🧪）
@@ -163,9 +163,13 @@ npm run build     # tsc && vite build → dist/
 - `normalize_output` 支持可选 `image_processor` 回调，在本地规范化之后、RustFS 上传之前执行（此时图片引用仍是原始文件名，可精确匹配）。MinerU 路径用它实现**图片描述**：管理员在系统配置页开启并配置多模态大模型（OpenAI 兼容接口，配置存 `system_config` 表，`image_caption_*` 键，Worker 每次任务实时读取），`image_caption/` 模块并发调用模型为图片生成描述，写回 result.md 的图片 alt 与 result.json 的 `img_caption`；失败只降级不影响任务。api_key 接口返回掩码 `"********"`，发回掩码表示不修改。
 - Worker 写入 `tasks.data` 列的 JSON 包含前端依赖的键：`pdf_path`（左侧 PDF 预览）、`json_content`（右侧版面渲染）、`markdown`、`markdown_file`。**重命名这些键会破坏 `TaskDetail.vue`**。
 
-### 大 PDF 父子任务
+### 父子任务（PDF 分片 + ZIP 解包）
 
-超过 `PDF_SPLIT_THRESHOLD_PAGES`（默认 500 页）的 PDF 在 **Worker 中**拆分（API 秒级响应）：`convert_to_parent_task` → N 个 `create_child_task`（每个 `PDF_SPLIT_CHUNK_SIZE` 页）→ 子任务独立处理 → `on_child_task_completed` 在最后一个子任务完成时返回父 ID → `_merge_parent_task_results` 按页序合并 Markdown/JSON。失败走 `on_child_task_failed`。
+两类任务在 **Worker 中**拆分为父子任务（API 秒级响应），共用 `task_db.py` 的父子任务机制：`convert_to_parent_task` → N 个 `create_child_task`（子任务的 chunk_info 存在 options JSON 里）→ 子任务独立处理 → `on_child_task_completed` 在最后一个子任务完成时返回父 ID → `_merge_parent_task_results` 合并 Markdown/JSON。失败走 `on_child_task_failed`。
+
+- **PDF 分片**：超过 `PDF_SPLIT_THRESHOLD_PAGES`（默认 500 页）时按 `PDF_SPLIT_CHUNK_SIZE` 页切分，分片存 `output_dir/splits/{task_id}/`，chunk_info 为 `{start_page, end_page, page_count}`，合并时按页序拼接并修正 page_idx 偏移。
+- **ZIP 解包**：`.zip` 任务在引擎路由前由 `_should_split_zip` 解包（任何 backend 值都走拆分，子任务继承父任务 backend），安全限制：最多 200 个条目、解压总大小上限 2GB（防 zip bomb），跳过目录、`__MACOSX`/隐藏文件、嵌套 zip 与非白名单格式；解压文件同样存 `output_dir/splits/{task_id}/`，chunk_info 为 `{index, entry_name}`，合并时按 index 排序并在每段 Markdown 前加 `## {entry_name}` 章节头。
+- **防重入**：`_process_task` 开头会跳过 `is_parent` 且已有子任务的任务（调度器 `reset_stale_tasks` 可能把超时的父任务打回 pending 被重复拉取）。
 
 ### 格式引擎插件系统
 

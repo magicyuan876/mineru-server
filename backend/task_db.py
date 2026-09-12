@@ -739,6 +739,17 @@ class TaskDB:
             )
 
         logger.debug(f"📄 Created child task: {task_id} (parent: {parent_task_id})")
+
+        # 子任务同样入队 Redis，否则 Redis 队列模式下永远不会被 Worker 拉取
+        self._enqueue_to_redis(
+            task_id,
+            priority,
+            {
+                "file_name": file_name,
+                "backend": backend,
+            },
+        )
+
         return task_id
 
     def on_child_task_completed(self, child_task_id: str) -> Optional[str]:

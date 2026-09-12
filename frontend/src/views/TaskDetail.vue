@@ -50,6 +50,15 @@
       <div v-if="['pending', 'processing', 'paused'].includes(task.status)" class="max-w-3xl mx-auto mt-16 space-y-6 px-4">
          <div class="card p-10 text-center shadow-sm">
             <h2 class="text-xl font-semibold text-gray-900 mb-2">处理中...</h2>
+            <div v-if="task.is_parent && task.subtask_progress" class="mt-6 max-w-md mx-auto">
+              <div class="flex justify-between text-sm text-gray-600 mb-2">
+                <span>{{ $t('task.subtaskProgress') }}</span>
+                <span>{{ task.subtask_progress.completed }}/{{ task.subtask_progress.total }} ({{ task.subtask_progress.percentage }}%)</span>
+              </div>
+              <div class="w-full bg-gray-200 rounded-full h-2">
+                <div class="bg-primary-600 h-2 rounded-full transition-all" :style="{ width: task.subtask_progress.percentage + '%' }"></div>
+              </div>
+            </div>
             <div class="mt-8 flex justify-center"><LoadingSpinner size="lg" /></div>
          </div>
       </div>

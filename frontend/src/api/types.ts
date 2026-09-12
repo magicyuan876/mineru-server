@@ -228,6 +228,19 @@ export interface Task {
     completed: number
     percentage: number
   }
+  // 子任务列表（父任务详情接口返回；chunk_info 为 PDF 分片页码范围或 zip 解包条目信息）
+  subtasks?: Array<{
+    task_id: string
+    status: TaskStatus
+    chunk_info?: {
+      start_page?: number
+      end_page?: number
+      page_count?: number
+      index?: number
+      entry_name?: string
+    } | null
+    error_message?: string | null
+  }>
   data?: {
     markdown_file: string
     content: string
