@@ -587,7 +587,7 @@ def retry_task(task_id: str, current_user: User = Depends(get_current_active_use
 
 
 @router.post("/tasks/{task_id}/cancel", tags=["任务管理"])
-async def cancel_task_endpoint(task_id: str, current_user: User = Depends(get_current_active_user)):
+def cancel_task_endpoint(task_id: str, current_user: User = Depends(get_current_active_user)):
     """
     取消任务：仅对 pending / processing / paused 状态的任务生效
     """
@@ -899,7 +899,7 @@ def health_check():
 
 
 @router.get("/files/output/{file_path:path}", tags=["文件服务"])
-async def serve_output_file(file_path: str, current_user: User = Depends(get_current_user_flexible)):
+def serve_output_file(file_path: str, current_user: User = Depends(get_current_user_flexible)):
     """提供输出文件的访问服务（需认证，仅任务所有者或全局查看权限可访问）"""
     try:
         decoded_path = unquote(file_path).lstrip("/")
@@ -927,7 +927,7 @@ async def serve_output_file(file_path: str, current_user: User = Depends(get_cur
 
 
 @router.get("/files/upload/{file_path:path}", tags=["文件服务"])
-async def serve_upload_file(file_path: str, current_user: User = Depends(get_current_user_flexible)):
+def serve_upload_file(file_path: str, current_user: User = Depends(get_current_user_flexible)):
     """提供上传源文件的访问服务（需认证，仅任务所有者或全局查看权限可访问）"""
     try:
         decoded_path = unquote(file_path).lstrip("/")
