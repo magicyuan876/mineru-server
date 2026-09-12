@@ -41,6 +41,7 @@ export interface RegisterRequest {
   password: string
   full_name?: string
   role?: UserRole
+  invite_code?: string
 }
 
 // 修改密码请求
@@ -96,8 +97,6 @@ export type Backend =
   | 'hybrid-auto-engine'// MinerU 混合高精度 (本地)
   | 'vlm-http-client'   // [新增] MinerU VLM Client (远程)
   | 'hybrid-http-client'// [新增] MinerU Hybrid Client (远程)
-  | 'paddleocr-vl'      // PaddleOCR-VL v1.5 (0.9B) - 本地推理
-  | 'paddleocr-vl-vllm' // PaddleOCR-VL v1.5 (0.9B) - vLLM 加速
   | 'sensevoice'
   | 'video'
   | 'fasta'             // FASTA 生物序列格式
@@ -156,26 +155,6 @@ export interface TaskOptions {
   force_ocr?: boolean
   draw_layout?: boolean
   draw_span?: boolean
-
-  // PaddleOCR 专属参数
-  useDocOrientationClassify?: boolean
-  useDocUnwarping?: boolean
-  useLayoutDetection?: boolean
-  useChartRecognition?: boolean
-  useSealRecognition?: boolean
-  useOcrForImageBlock?: boolean
-  mergeTables?: boolean
-  relevelTitles?: boolean
-  layoutShapeMode?: string
-  promptLabel?: string
-  repetitionPenalty?: number
-  temperature?: number
-  topP?: number
-  minPixels?: number
-  maxPixels?: number
-  layoutNms?: boolean
-  restructurePages?: boolean
-  markdownIgnoreLabels?: string[]
 }
 
 // 任务提交请求 (前端 Form 表单数据)
@@ -224,27 +203,6 @@ export interface SubmitTaskRequest {
   enable_speaker_diarization?: boolean
 
   // Office 转换参数
-  convert_office_to_pdf?: boolean
-
-  // PaddleOCR 专属参数
-  useDocOrientationClassify?: boolean
-  useDocUnwarping?: boolean
-  useLayoutDetection?: boolean
-  useChartRecognition?: boolean
-  useSealRecognition?: boolean
-  useOcrForImageBlock?: boolean
-  mergeTables?: boolean
-  relevelTitles?: boolean
-  layoutShapeMode?: string
-  promptLabel?: string
-  repetitionPenalty?: number
-  temperature?: number
-  topP?: number
-  minPixels?: number
-  maxPixels?: number
-  layoutNms?: boolean
-  restructurePages?: boolean
-  markdownIgnoreLabels?: string // ✅ 修改为 string，对应表单中的逗号分隔字符串
 }
 
 // 任务信息
@@ -270,6 +228,19 @@ export interface Task {
     completed: number
     percentage: number
   }
+  // 子任务列表（父任务详情接口返回；chunk_info 为 PDF 分片页码范围或 zip 解包条目信息）
+  subtasks?: Array<{
+    task_id: string
+    status: TaskStatus
+    chunk_info?: {
+      start_page?: number
+      end_page?: number
+      page_count?: number
+      index?: number
+      entry_name?: string
+    } | null
+    error_message?: string | null
+  }>
   data?: {
     markdown_file: string
     content: string
@@ -353,19 +324,13 @@ export interface EngineItem {
 }
 
 export interface EngineSystemInfo {
-  python: string
   platform: string
-  cuda: string
-  gpu: string
-  gpu_memory_gb: number | null
-  packages: Record<string, string>
 }
 
 export interface EnginesResponse {
   success: boolean
   engines: {
     document: EngineItem[]
-    ocr: EngineItem[]
     audio: EngineItem[]
     video: EngineItem[]
     format: EngineItem[]
@@ -383,6 +348,8 @@ export interface SystemConfig {
   system_logo: string
   show_github_star: boolean
   allow_registration: boolean
+  registration_invite_required?: boolean
+  registration_invite_code?: string
 }
 
 // 系统配置响应
@@ -397,4 +364,38 @@ export interface SystemConfigUpdateRequest {
   system_logo?: string
   show_github_star?: boolean
   allow_registration?: boolean
+  registration_invite_code?: string
+  image_caption_enabled?: boolean
+  image_caption_api_base?: string
+  image_caption_api_key?: string
+  image_caption_model?: string
+  image_caption_prompt?: string
+  image_caption_max_images?: number
+  image_caption_concurrency?: number
+  image_caption_timeout?: number
+}
+
+// 图片描述（多模态大模型）配置
+export interface ImageCaptionConfig {
+  enabled: boolean
+  api_base: string
+  api_key: string
+  model: string
+  prompt: string
+  max_images: number
+  concurrency: number
+  timeout: number
+}
+
+// 图片描述配置响应
+export interface ImageCaptionConfigResponse {
+  success: boolean
+  config: ImageCaptionConfig
+}
+
+// 图片描述连接测试结果
+export interface ImageCaptionTestResult {
+  success: boolean
+  message: string
+  latency_ms: number
 }

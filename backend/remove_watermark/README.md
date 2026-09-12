@@ -281,7 +281,7 @@ remover.cleanup()
 ```bash
 curl -X POST http://localhost:8000/api/v1/tasks/submit \
   -F 'file=@image.png' \
-  -F 'backend=paddleocr-vl' \
+  -F 'backend=pipeline' \
   -F 'remove_watermark=true' \
   -F 'watermark_conf_threshold=0.35' \
   -F 'watermark_dilation=10'

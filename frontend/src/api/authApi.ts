@@ -30,6 +30,13 @@ export async function register(userData: RegisterRequest): Promise<User> {
 }
 
 /**
+ * 用户登出（通知后端吊销当前 Token）
+ */
+export async function logout(): Promise<void> {
+  await apiClient.post('/api/v1/auth/logout')
+}
+
+/**
  * 获取当前用户信息
  */
 export async function getCurrentUser(): Promise<User> {

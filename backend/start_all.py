@@ -7,7 +7,6 @@ MinerU Tianshu - 启动所有服务
 3. Task Scheduler (可选) - 后台任务调度
 4. MCP Server (可选) - 端口 8002
 
-自动检查并下载 OCR 模型（PaddleOCR-VL）
 支持 GPU 加速、任务队列、优先级管理
 """
 
@@ -19,7 +18,6 @@ import os
 from loguru import logger
 from pathlib import Path
 import argparse
-from utils import parse_list_arg
 from dotenv import load_dotenv
 
 
@@ -36,8 +34,6 @@ class TianshuLauncher:
         accelerator="auto",
         enable_mcp=False,
         mcp_port=8002,
-        paddleocr_vl_vllm_engine_enabled=False,  # 新增paddle ocr vllm engine 配置
-        paddleocr_vl_vllm_api_list=[],  # 新增paddle ocr vllm engine 配置
     ):
         self.output_dir = output_dir
         self.api_port = api_port
@@ -48,48 +44,6 @@ class TianshuLauncher:
         self.enable_mcp = enable_mcp
         self.mcp_port = mcp_port
         self.processes = []
-        self.paddleocr_vl_vllm_engine_enabled = paddleocr_vl_vllm_engine_enabled
-        self.paddleocr_vl_vllm_api_list = paddleocr_vl_vllm_api_list
-
-    def check_ocr_models(self):
-        """检查并下载所有 OCR 模型（异步，不阻塞启动）"""
-        import threading
-
-        # 1. 检查 PaddleOCR-VL 模型
-        def check_paddleocr_vl():
-            try:
-                from paddleocr_vl import PaddleOCRVLEngine
-
-                logger.info("🔍 Checking PaddleOCR-VL...")
-                logger.info("   Note: PaddleOCR-VL models are auto-managed by PaddleOCR")
-                logger.info("   Cache location: ~/.paddleocr/models/")
-                logger.info("   Model will be auto-downloaded on first use (~2GB)")
-
-                # 检查 home 目录的模型缓存
-                home_dir = Path.home()
-                model_cache_dir = home_dir / ".paddleocr" / "models"
-
-                if model_cache_dir.exists():
-                    logger.info(f"✅ PaddleOCR model cache found at: {model_cache_dir}")
-                else:
-                    logger.info("ℹ️  PaddleOCR model cache not found, will be created on first use")
-
-                # 简单初始化引擎（不触发下载）
-                try:
-                    PaddleOCRVLEngine()
-                    logger.info("✅ PaddleOCR-VL engine initialized successfully")
-                except Exception as e:
-                    logger.warning(f"⚠️  PaddleOCR-VL initialization failed: {e}")
-                    logger.info("   This is normal if GPU is not available or dependencies are missing")
-
-            except ImportError:
-                logger.debug("PaddleOCR-VL not installed, skipping check")
-            except Exception as e:
-                logger.debug(f"PaddleOCR-VL check skipped: {e}")
-
-        # 在后台线程中下载模型
-        thread_paddleocr = threading.Thread(target=check_paddleocr_vl, daemon=True)
-        thread_paddleocr.start()
 
     def start_services(self):
         """启动所有服务"""
@@ -141,12 +95,6 @@ class TianshuLauncher:
                 str(self.devices) if isinstance(self.devices, str) else ",".join(map(str, self.devices)),
             ]
 
-            # 只在启用时才添加 paddleocr-vl-vllm-engine-enabled 参数
-            if self.paddleocr_vl_vllm_engine_enabled:
-                worker_cmd.extend(["--paddleocr-vl-vllm-engine-enabled"])
-            # 添加 paddleocr-vl-vllm-api-list 参数
-            worker_cmd.extend(["--paddleocr-vl-vllm-api-list", str(self.paddleocr_vl_vllm_api_list)])
-
             worker_proc = subprocess.Popen(worker_cmd, cwd=Path(__file__).parent, env=worker_env)
             self.processes.append(("LitServe Workers", worker_proc))
             time.sleep(5)
@@ -187,7 +135,6 @@ class TianshuLauncher:
                 mcp_env = os.environ.copy()
                 mcp_env["API_BASE_URL"] = f"http://localhost:{self.api_port}"
                 mcp_env["MCP_PORT"] = str(self.mcp_port)
-                mcp_env["MCP_HOST"] = "0.0.0.0"
 
                 mcp_proc = subprocess.Popen([sys.executable, "mcp_server.py"], cwd=Path(__file__).parent, env=mcp_env)
                 self.processes.append(("MCP Server", mcp_proc))
@@ -227,9 +174,6 @@ class TianshuLauncher:
             logger.info("")
             logger.info("=" * 70)
             logger.info("")
-
-            # 所有服务启动完成后，检查并下载所有 OCR 模型
-            self.check_ocr_models()
 
             return True
 
@@ -329,7 +273,7 @@ def main():
         "--accelerator",
         type=str,
         default="auto",
-        choices=["auto", "cuda", "cpu"],
+        choices=["auto", "cuda", "mps", "cpu"],
         help="加速器类型 (默认: auto，自动检测)",
     )
     parser.add_argument("--workers-per-device", type=int, default=1, help="每个GPU的worker数量 (默认: 1)")
@@ -338,19 +282,6 @@ def main():
         "--enable-mcp", action="store_true", help="启用 MCP Server（支持 Model Context Protocol 远程调用）"
     )
     parser.add_argument("--mcp-port", type=int, default=8002, help="MCP Server 端口 (默认: 8002)")
-    # 配置 paddleocr-vl-vllm engine
-    parser.add_argument(
-        "--paddleocr-vl-vllm-engine-enabled",
-        action="store_true",
-        default=False,
-        help="是否启用 PaddleOCR VL VLLM 引擎 (默认: False)",
-    )
-    parser.add_argument(
-        "--paddleocr-vl-vllm-api-list",
-        type=parse_list_arg,
-        default=[],
-        help='PaddleOCR VL VLLM API 列表（Python list 字面量格式，如: \'["http://0.0.0.0:17300/v1", "http://0.0.0.0:17301/v1"]\'）',
-    )
 
     args = parser.parse_args()
 
@@ -362,17 +293,6 @@ def main():
         except ValueError:
             logger.warning(f"Invalid devices format: {devices}, using 'auto'")
             devices = "auto"
-    if args.paddleocr_vl_vllm_engine_enabled:
-        logger.success("start_all 脚本中 PaddleOCR VL VLLM 引擎已设置启用")
-        if not args.paddleocr_vl_vllm_api_list:
-            logger.error(
-                "请配置 --paddleocr-vl-vllm-api-list 参数, 或者移除 --paddleocr-vl-vllm-engine-enabled 来关闭 PaddleOCR VL VLLM 引擎"
-            )
-            sys.exit(1)
-        else:
-            logger.success(f"PaddleOCR VL VLLM 引擎，API 列表为: {args.paddleocr_vl_vllm_api_list}")
-    else:
-        logger.info("start_all 脚本中PaddleOCR VL VLLM 引擎已设置不启用")
     # 创建启动器
     launcher = TianshuLauncher(
         output_dir=args.output_dir,
@@ -383,8 +303,6 @@ def main():
         accelerator=args.accelerator,
         enable_mcp=args.enable_mcp,
         mcp_port=args.mcp_port,
-        paddleocr_vl_vllm_engine_enabled=args.paddleocr_vl_vllm_engine_enabled,
-        paddleocr_vl_vllm_api_list=args.paddleocr_vl_vllm_api_list,
     )
 
     # 设置信号处理

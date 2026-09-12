@@ -44,16 +44,19 @@ services:
     profiles:
       - redis  # 使用 profile 实现可选启动
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      # 仅绑定宿主机回环
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     environment:
       - TZ=Asia/Shanghai
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD required}
+    # noeviction：任务队列不允许因内存压力丢任务；CONFIG 命令禁用防止运行时改配置
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required} --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction --rename-command CONFIG ""
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "$$REDIS_PASSWORD", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -69,8 +72,8 @@ services:
     container_name: tianshu-rustfs
     restart: unless-stopped
     ports:
-      - "${RUSTFS_PORT:-9000}:9000"
-      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"
+      # 仅绑定宿主机回环：浏览器经前端 nginx 的 /s3/ 路径反代访问图片
+      - "127.0.0.1:${RUSTFS_PORT:-9000}:9000"
     volumes:
       # RustFS 数据存储（使用命名卷避免权限问题）
       - rustfs-data:/data
@@ -82,9 +85,9 @@ services:
     environment:
       # 时区设置
       - TZ=Asia/Shanghai
-      # RustFS 配置
-      - RUSTFS_ROOT_USER=${RUSTFS_ACCESS_KEY:-rustfsadmin}
-      - RUSTFS_ROOT_PASSWORD=${RUSTFS_SECRET_KEY:-rustfsadmin}
+      # RustFS 配置（必须设置，拒绝默认凭据）
+      - RUSTFS_ROOT_USER=${RUSTFS_ACCESS_KEY:?RUSTFS_ACCESS_KEY required}
+      - RUSTFS_ROOT_PASSWORD=${RUSTFS_SECRET_KEY:?RUSTFS_SECRET_KEY required}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 30s
@@ -106,16 +109,13 @@ services:
     volumes:
       # 模型外部卷(只读)
       - ./models-offline:/models-external:ro
-      # 容器内模型缓存(读写)
-      - backend-models-cache:/root/.cache:rw
-      - backend-paddleocr-cache:/root/.paddleocr:rw
+      # 容器内模型缓存(读写；容器以非 root 用户 tianshu 运行)
+      - backend-models-cache:/home/tianshu/.cache:rw
       - ./models:/app/models:rw
-      # PaddleOCR 模型缓存(持久化，避免重复下载)
-      - ./models/paddlex_cache:/root/.paddlex:rw
       # Hugging Face 模型缓存(持久化)
-      - ./models/huggingface_cache:/root/.cache/huggingface:rw
+      - ./models/huggingface_cache:/home/tianshu/.cache/huggingface:rw
       # ModelScope 模型缓存(持久化，国内模型下载)
-      - ./models/modelscope_cache:/root/.cache/modelscope:rw
+      - ./models/modelscope_cache:/home/tianshu/.cache/modelscope:rw
       # 上传文件(统一使用 /app/data 路径)
       - ./data/uploads:/app/data/uploads:rw
       # 输出结果
@@ -138,7 +138,10 @@ services:
       # JWT 认证
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
-      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-60}
+      # 首次部署必须设置管理员初始密码（见 .env），否则 API 服务拒绝启动
+      - TIANSHU_ADMIN_USERNAME=${TIANSHU_ADMIN_USERNAME:-admin}
+      - TIANSHU_ADMIN_PASSWORD=${TIANSHU_ADMIN_PASSWORD}
 
       # CORS 配置
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:80}
@@ -163,12 +166,12 @@ services:
       # RustFS 对象存储配置
       - RUSTFS_ENABLED=${RUSTFS_ENABLED:-true}
       - RUSTFS_ENDPOINT=${RUSTFS_ENDPOINT:-rustfs:9000}
-      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY:-rustfsadmin}
-      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY:-rustfsadmin}
+      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY}
+      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY}
       - RUSTFS_BUCKET=${RUSTFS_BUCKET:-ts-img}
       - RUSTFS_SECURE=${RUSTFS_SECURE:-false}
-      # RUSTFS_PUBLIC_URL: 必须设置为外部可访问的完整 URL
-      - RUSTFS_PUBLIC_URL=${RUSTFS_PUBLIC_URL}
+      # RUSTFS_PUBLIC_URL: 浏览器可达的完整 URL，默认经前端 nginx /s3/ 反代
+      - RUSTFS_PUBLIC_URL=${RUSTFS_PUBLIC_URL:-http://localhost/s3}
 
       # 模型下载配置(离线模式)
       - MODEL_DOWNLOAD_SOURCE=${MODEL_DOWNLOAD_SOURCE:-local}
@@ -211,21 +214,18 @@ services:
     restart: unless-stopped
     command: ["worker", "python", "litserve_worker.py"]
     ports:
-      - "${WORKER_PORT:-8001}:8001"
+      - "127.0.0.1:${WORKER_PORT:-8001}:8001"
     volumes:
       # 模型外部卷(只读)
       - ./models-offline:/models-external:ro
-      # 容器内模型缓存(读写)
-      - worker-models-cache:/root/.cache:rw
-      - worker-paddleocr-cache:/root/.paddleocr:rw
+      # 容器内模型缓存(读写；容器以非 root 用户 tianshu 运行)
+      - worker-models-cache:/home/tianshu/.cache:rw
       - ./models:/app/models:rw
-      # PaddleOCR 模型缓存(持久化，避免重复下载)
-      - ./models/paddlex_cache:/root/.paddlex:rw
       # Hugging Face 模型缓存(持久化)
-      - ./models/huggingface_cache:/root/.cache/huggingface:rw
+      - ./models/huggingface_cache:/home/tianshu/.cache/huggingface:rw
       # ModelScope 模型缓存(持久化，国内模型下载)
-      - ./models/modelscope_cache:/root/.cache/modelscope:rw
-      # 上传文件(读写，需要创建 converted_pdfs 目录用于 Office 转 PDF)
+      - ./models/modelscope_cache:/home/tianshu/.cache/modelscope:rw
+      # 上传文件(读写)
       - ./data/uploads:/app/data/uploads:rw
       # 输出结果
       - ./data/output:/app/data/output:rw
@@ -274,12 +274,12 @@ services:
 
       # RustFS 对象存储配置
       - RUSTFS_ENDPOINT=${RUSTFS_ENDPOINT:-rustfs:9000}
-      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY:-rustfsadmin}
-      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY:-rustfsadmin}
+      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY}
+      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY}
       - RUSTFS_BUCKET=${RUSTFS_BUCKET:-ts-img}
       - RUSTFS_SECURE=${RUSTFS_SECURE:-false}
-      # RUSTFS_PUBLIC_URL: 必须设置为外部可访问的完整 URL
-      - RUSTFS_PUBLIC_URL=${RUSTFS_PUBLIC_URL}
+      # RUSTFS_PUBLIC_URL: 浏览器可达的完整 URL，默认经前端 nginx /s3/ 反代
+      - RUSTFS_PUBLIC_URL=${RUSTFS_PUBLIC_URL:-http://localhost/s3}
 
       # Redis 队列配置（可选 - 解决 SQLite 并发瓶颈）
       - REDIS_QUEUE_ENABLED=${REDIS_QUEUE_ENABLED:-false}
@@ -324,7 +324,8 @@ services:
     restart: unless-stopped
     command: ["mcp", "python", "mcp_server.py"]
     ports:
-      - "${MCP_PORT:-8002}:8002"
+      # 仅绑定宿主机回环：MCP 供本机客户端使用
+      - "127.0.0.1:${MCP_PORT:-8002}:8002"
     volumes:
       # 配置文件
       - ./mcp_config.example.json:/app/backend/mcp_config.json:ro
@@ -336,10 +337,15 @@ services:
     environment:
       # 时区设置
       - TZ=Asia/Shanghai
-      - HOST=0.0.0.0
+      - MCP_HOST=0.0.0.0
       - MCP_PORT=8002
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - API_URL=${API_URL:-http://backend:8000}
+      - API_BASE_URL=${API_BASE_URL:-http://backend:8000}
+      # MCP 访问密钥（逗号分隔）与 MCP 调后端 API 的服务凭据
+      - MCP_API_KEYS=${MCP_API_KEYS:-}
+      - TIANSHU_API_KEY=${TIANSHU_API_KEY:-}
+      - TIANSHU_ADMIN_USERNAME=${TIANSHU_ADMIN_USERNAME:-admin}
+      - TIANSHU_ADMIN_PASSWORD=${TIANSHU_ADMIN_PASSWORD}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
@@ -396,15 +402,9 @@ volumes:
   backend-models-cache:
     driver: local
     name: tianshu-backend-models
-  backend-paddleocr-cache:
-    driver: local
-    name: tianshu-backend-paddleocr
   worker-models-cache:
     driver: local
     name: tianshu-worker-models
-  worker-paddleocr-cache:
-    driver: local
-    name: tianshu-worker-paddleocr
   redis-data:
     driver: local
     name: tianshu-redis-data

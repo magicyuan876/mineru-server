@@ -117,12 +117,20 @@ class RustFSClient:
             secure: 是否使用 HTTPS
             public_url: 公开访问 URL (必须设置，例如: http://192.168.1.100:9000)
         """
-        # 从环境变量读取配置
+        # 从环境变量读取配置（不再提供 rustfsadmin 默认凭据兜底）
         self.endpoint = endpoint or os.getenv("RUSTFS_ENDPOINT", "rustfs:9000")
-        self.access_key = access_key or os.getenv("RUSTFS_ACCESS_KEY", "rustfsadmin")
-        self.secret_key = secret_key or os.getenv("RUSTFS_SECRET_KEY", "rustfsadmin")
+        self.access_key = access_key or os.getenv("RUSTFS_ACCESS_KEY", "")
+        self.secret_key = secret_key or os.getenv("RUSTFS_SECRET_KEY", "")
         self.bucket_name = bucket_name or os.getenv("RUSTFS_BUCKET", "ts-img")
         self.secure = secure or os.getenv("RUSTFS_SECURE", "false").lower() == "true"
+
+        # 启用 RustFS 时凭据必须显式配置；未启用时不强制（仅 logo 上传等路径会触达本类）
+        rustfs_enabled = os.getenv("RUSTFS_ENABLED", "true").lower() in ("true", "1", "yes")
+        if rustfs_enabled and (not self.access_key or not self.secret_key):
+            raise RuntimeError(
+                "RustFS credentials missing: RUSTFS_ACCESS_KEY / RUSTFS_SECRET_KEY must be set "
+                "when RUSTFS_ENABLED=true (no default credentials are allowed)."
+            )
 
         # 公开 URL 配置：必须通过 RUSTFS_PUBLIC_URL 环境变量设置
         self.public_url = public_url or os.getenv("RUSTFS_PUBLIC_URL", "").strip()

@@ -2,26 +2,18 @@
 #
 # 只跑 MinerU pipeline 引擎的精简部署，在 docker-compose.yml 之上做增量覆盖。
 #
-# 用法（推荐直接用脚本）:
-#   ./scripts/deploy-pipeline.sh
+# 用法（推荐直接用部署脚本）:
+#   bash setup.sh --mode pipeline
 #
 # 手动用法:
 #   docker compose -f docker-compose.yml -f docker-compose.pipeline.yml up -d
 #
 # 相对默认部署的差异:
-#   1. 不启动 vllm-paddleocr（默认会常驻占用 60% 显存，pipeline 用不到）
-#   2. init-models 只下载 PDF-Extract-Kit，不下 MinerU-VLM / PaddleOCR-VL（省 ~4GB）
-#   3. worker 去掉 vLLM 相关参数
-#   4. 并发数（MAX_CONCURRENT_TASKS）与显存预算（MINERU_VIRTUAL_VRAM_SIZE）改为从 .env 读取
+#   1. init-models 只下载 PDF-Extract-Kit，不下 MinerU-VLM（省 ~4GB）
+#   2. worker 去掉 vLLM 相关参数
+#   3. 并发数（MAX_CONCURRENT_TASKS）与显存预算（MINERU_VIRTUAL_VRAM_SIZE）改为从 .env 读取
 
 services:
-  # ============================================================================
-  # PaddleOCR-VL 的 vLLM 常驻服务 —— pipeline 模式不需要，挪到 profile 后默认不启动
-  # 需要时: docker compose ... --profile vllm up -d vllm-paddleocr
-  # ============================================================================
-  vllm-paddleocr:
-    profiles: ["vllm"]
-
   # ============================================================================
   # 只下载 pipeline 需要的模型（PDF-Extract-Kit-1.0）
   # mineru.json 仍会正常生成，vlm 路径留空目录不影响 pipeline

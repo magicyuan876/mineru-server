@@ -36,6 +36,7 @@ output/
 
 # Environment
 .env
+.env.cpu
 .venv
 venv/
 ENV/
@@ -61,6 +62,7 @@ docker-images
 docker-images-cpu
 models-offline
 cpu-deployment
+uv.lock
 
 # 预下载的大 wheel（如 flash_attn，242MB），只放服务器本地，不入库
 backend/wheels/*.whl

@@ -8,12 +8,14 @@ MinerU Tianshu - Authentication Routes
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
 from fastapi.responses import RedirectResponse
 from typing import List
-from datetime import timedelta
+from datetime import datetime, timedelta
 from loguru import logger
 
 from .models import (
     User,
+    RegisterRequest,
     UserCreate,
+    UserRole,
     UserUpdate,
     UserLogin,
     PasswordChange,
@@ -23,7 +25,7 @@ from .models import (
     Permission,
 )
 from .auth_db import AuthDB
-from .jwt_handler import create_access_token, JWT_EXPIRE_MINUTES
+from .jwt_handler import create_access_token, decode_token_payload, JWT_EXPIRE_MINUTES
 from .dependencies import (
     get_auth_db,
     get_current_active_user,
@@ -38,18 +40,56 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
 
 @router.post("/register", response_model=User, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserCreate, auth_db: AuthDB = Depends(get_auth_db)):
+async def register(user_data: RegisterRequest, auth_db: AuthDB = Depends(get_auth_db)):
     """
     用户注册
 
-    创建新用户账户。默认角色为 'user'，需要管理员才能创建其他角色。
+    创建新用户账户。角色恒为 'user'，需要管理员才能创建其他角色。
     """
+    # 注册开关 fail-closed：配置缺失或读取失败一律拒绝注册
     try:
-        user = auth_db.create_user(user_data)
+        allow_registration = SystemConfig().get_config("allow_registration")
+    except Exception as e:
+        logger.error(f"❌ Failed to read allow_registration config: {e}")
+        allow_registration = None
+
+    if allow_registration != "true":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Registration is disabled")
+
+    # 邀请码校验：管理员配置后注册必须携带，比对用常量时间比较防止时序侧信道
+    try:
+        required_invite_code = (SystemConfig().get_config("registration_invite_code") or "").strip()
+    except Exception as e:
+        logger.error(f"❌ Failed to read registration_invite_code config: {e}")
+        required_invite_code = ""
+
+    if required_invite_code:
+        import hmac
+
+        provided = (user_data.invite_code or "").strip()
+        if not provided or not hmac.compare_digest(provided, required_invite_code):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid invite code")
+
+    try:
+        # 公开注册入口不允许指定角色，固定为普通用户
+        user = auth_db.create_user(
+            UserCreate(
+                username=user_data.username,
+                email=user_data.email,
+                password=user_data.password,
+                full_name=user_data.full_name,
+                role=UserRole.USER,
+            )
+        )
         logger.info(f"✅ User registered: {user.username} ({user.email})")
         return user
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        # 不回显具体冲突字段，防止账号枚举
+        logger.warning(f"⚠️ Registration failed for username '{user_data.username}': {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Registration failed, please try different credentials",
+        )
 
 
 @router.post("/login", response_model=Token)
@@ -71,17 +111,43 @@ async def login(credentials: UserLogin, auth_db: AuthDB = Depends(get_auth_db)):
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is disabled")
 
-    # 生成 JWT Token
+    # 生成 JWT Token（携带当前令牌代次，改密后旧令牌失效）
     access_token = create_access_token(
         user_id=user.user_id,
         username=user.username,
         role=user.role,
         expires_delta=timedelta(minutes=JWT_EXPIRE_MINUTES),
+        epoch=auth_db.get_token_epoch(user.user_id),
     )
 
     logger.info(f"✅ User logged in: {user.username}")
 
     return Token(access_token=access_token, token_type="bearer", expires_in=JWT_EXPIRE_MINUTES * 60)
+
+
+@router.post("/logout")
+async def logout(
+    request: Request,
+    current_user: User = Depends(get_current_active_user),
+    auth_db: AuthDB = Depends(get_auth_db),
+):
+    """
+    用户登出
+
+    将当前 JWT 写入吊销表，Token 到期前无法再使用。API Key 认证用户无 JWT 可吊销，直接返回成功。
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[len("Bearer ") :]
+        payload = decode_token_payload(token)
+        if payload:
+            jti = payload.get("jti")
+            exp = payload.get("exp")
+            if jti and exp:
+                auth_db.revoke_token(jti, current_user.user_id, datetime.utcfromtimestamp(exp))
+                logger.info(f"✅ Token revoked on logout: {current_user.username} (jti: {jti[:8]}...)")
+
+    return {"success": True}
 
 
 @router.get("/me", response_model=User)
@@ -176,6 +242,7 @@ async def create_api_key(
         user_id=current_user.user_id,
         name=key_data.name,
         expires_days=key_data.expires_days,
+        scopes=key_data.scopes,
     )
 
     logger.info(f"✅ API Key created: {key_info['prefix']}... for user {current_user.username}")
@@ -411,12 +478,13 @@ if OIDC_AVAILABLE:
                 },
             )
 
-            # 生成 JWT Token
+            # 生成 JWT Token（携带当前令牌代次）
             access_token = create_access_token(
                 user_id=user.user_id,
                 username=user.username,
                 role=user.role,
                 expires_delta=timedelta(minutes=JWT_EXPIRE_MINUTES),
+                epoch=auth_db.get_token_epoch(user.user_id),
             )
 
             logger.info(f"✅ SSO user logged in: {user.username} (provider: oidc)")
@@ -441,6 +509,9 @@ async def get_system_config():
     config = SystemConfig()
     configs = config.get_all_configs()
 
+    # 邀请码只暴露"是否需要"，绝不回传真实值；掩码供管理员页面回显
+    invite_code_set = bool((configs.get("registration_invite_code") or "").strip())
+
     # 转换布尔值配置项
     return {
         "success": True,
@@ -449,6 +520,8 @@ async def get_system_config():
             "system_logo": configs.get("system_logo", ""),
             "show_github_star": configs.get("show_github_star", "true") == "true",
             "allow_registration": configs.get("allow_registration", "true") == "true",
+            "registration_invite_required": invite_code_set,
+            "registration_invite_code": "********" if invite_code_set else "",
         },
     }
 
@@ -474,13 +547,31 @@ async def update_system_config(
     config = SystemConfig()
 
     # 允许的配置键
-    allowed_keys = {"system_name", "system_logo", "show_github_star", "allow_registration"}
+    allowed_keys = {
+        "system_name",
+        "system_logo",
+        "show_github_star",
+        "allow_registration",
+        "registration_invite_code",
+        # 图片描述（多模态大模型）配置
+        "image_caption_enabled",
+        "image_caption_api_base",
+        "image_caption_api_key",
+        "image_caption_model",
+        "image_caption_prompt",
+        "image_caption_max_images",
+        "image_caption_concurrency",
+        "image_caption_timeout",
+    }
     update_data = {}
 
     for key, value in config_data.items():
         if key in allowed_keys:
+            # 掩码占位符表示前端未修改，跳过不更新
+            if key in {"image_caption_api_key", "registration_invite_code"} and value == "********":
+                continue
             # 转换布尔值配置项为字符串
-            if key in {"show_github_star", "allow_registration"}:
+            if key in {"show_github_star", "allow_registration", "image_caption_enabled"}:
                 update_data[key] = "true" if value else "false"
             else:
                 update_data[key] = str(value)
@@ -497,6 +588,7 @@ async def update_system_config(
 
     # 返回更新后的配置
     updated_configs = config.get_all_configs()
+    invite_code_set = bool((updated_configs.get("registration_invite_code") or "").strip())
     return {
         "success": True,
         "message": "Configuration updated successfully",
@@ -505,8 +597,109 @@ async def update_system_config(
             "system_logo": updated_configs.get("system_logo", ""),
             "show_github_star": updated_configs.get("show_github_star", "true") == "true",
             "allow_registration": updated_configs.get("allow_registration", "true") == "true",
+            "registration_invite_required": invite_code_set,
+            "registration_invite_code": "********" if invite_code_set else "",
         },
     }
+
+
+# ==================== 图片描述（多模态大模型）配置 (管理员) ====================
+
+# api_key 的掩码占位符：接口不返回真实密钥，前端未修改时原样发回
+IMAGE_CAPTION_KEY_MASK = "********"
+
+
+def _get_image_caption_configs() -> dict:
+    """读取图片描述相关配置（含读取端默认值兜底，兼容存量部署）"""
+    from image_caption.config import (
+        DEFAULT_API_BASE,
+        DEFAULT_CONCURRENCY,
+        DEFAULT_MAX_IMAGES,
+        DEFAULT_PROMPT,
+        DEFAULT_TIMEOUT,
+    )
+
+    config = SystemConfig()
+    raw = config.get_all_configs()
+
+    def get(key: str, default: str) -> str:
+        value = raw.get(key)
+        return value if value is not None else default
+
+    def get_int(key: str, default: int) -> int:
+        try:
+            return int(get(key, str(default)))
+        except (ValueError, TypeError):
+            return default
+
+    return {
+        "enabled": get("image_caption_enabled", "false") == "true",
+        "api_base": get("image_caption_api_base", DEFAULT_API_BASE),
+        "api_key": get("image_caption_api_key", ""),
+        "model": get("image_caption_model", ""),
+        "prompt": get("image_caption_prompt", DEFAULT_PROMPT),
+        "max_images": get_int("image_caption_max_images", DEFAULT_MAX_IMAGES),
+        "concurrency": get_int("image_caption_concurrency", DEFAULT_CONCURRENCY),
+        "timeout": get_int("image_caption_timeout", DEFAULT_TIMEOUT),
+    }
+
+
+@router.get("/system/config/image-caption")
+async def get_image_caption_config(
+    current_user: User = Depends(require_permission(Permission.SYSTEM_CONFIG)),
+):
+    """
+    获取图片描述（多模态大模型）配置 (管理员)
+
+    api_key 属敏感信息，以掩码返回；公开接口 /system/config 不包含这些配置。
+    """
+    config = _get_image_caption_configs()
+    config["api_key"] = IMAGE_CAPTION_KEY_MASK if config["api_key"] else ""
+    return {"success": True, "config": config}
+
+
+@router.post("/system/config/image-caption/test")
+async def test_image_caption_connection(
+    test_data: dict,
+    current_user: User = Depends(require_permission(Permission.SYSTEM_CONFIG)),
+):
+    """
+    测试多模态模型端点连通性 (管理员)
+
+    请求体可携带表单中尚未保存的配置（api_base/api_key/model/timeout），
+    api_key 为掩码占位符时回落到已保存的值。
+    """
+    import asyncio
+
+    from image_caption.captioner import ImageCaptioner
+    from image_caption.config import ImageCaptionConfig
+
+    stored = _get_image_caption_configs()
+
+    api_key = test_data.get("api_key", "")
+    if api_key == IMAGE_CAPTION_KEY_MASK:
+        api_key = stored["api_key"]
+
+    config = ImageCaptionConfig(
+        enabled=True,
+        api_base=(test_data.get("api_base") or stored["api_base"]).strip(),
+        api_key=api_key.strip(),
+        model=(test_data.get("model") or stored["model"]).strip(),
+        prompt=stored["prompt"],
+        max_images=stored["max_images"],
+        concurrency=stored["concurrency"],
+        timeout=int(test_data.get("timeout") or stored["timeout"]),
+    )
+    if not config.api_base or not config.model:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="API Base 和模型名不能为空",
+        )
+
+    # 同步 SDK 调用放到线程中，避免阻塞事件循环
+    success, message, latency_ms = await asyncio.to_thread(ImageCaptioner(config).test_connection)
+    logger.info(f"🔍 Image caption connection test by {current_user.username}: {success} ({message})")
+    return {"success": success, "message": message, "latency_ms": latency_ms}
 
 
 @router.post("/system/logo/upload")

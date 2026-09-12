@@ -52,7 +52,7 @@ class MinerUPipelineEngine:
                     cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, device: str = "cuda:0", vlm_api_base: str = None):
+    def __init__(self, device: str = "cpu", vlm_api_base: str = None):
         if self._initialized:
             return
 
@@ -204,13 +204,15 @@ class MinerUPipelineEngine:
             except Exception:
                 pass
 
-            # 强制 GC 与 CUDA 缓存清理
+            # 强制 GC 与 CUDA/MPS 缓存清理
             try:
                 self._pipeline = None  # 释放函数引用，促使下次重新加载
                 gc.collect()
                 if torch and torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     torch.cuda.ipc_collect()
+                if torch and getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
                 logger.info("✅ GPU Memory released completely.")
             except Exception as e:
                 logger.warning(f"Hard cleanup warning: {e}")
@@ -308,12 +310,12 @@ class MinerUPipelineEngine:
                 except Exception as e:
                     raise ValueError(f"Image conversion failed: {e}")
                 safe_file_name = "result.pdf"
-            elif file_ext == ".docx":
-                # MinerU 3.0 原生 DOCX 解析：直接传字节，保留 .docx 后缀
-                # do_parse 内部通过文件名后缀识别类型，走 office_docx_analyze() 路径
-                logger.info("📄 DOCX detected, passing to MinerU native parser...")
+            elif file_ext in [".docx", ".xlsx", ".pptx"]:
+                # MinerU 3.0+ 原生 DOCX、3.1+ 原生 PPTX/XLSX 解析：直接传字节，保留原后缀
+                # do_parse 内部通过文件名后缀识别类型
+                logger.info(f"📄 {file_ext.upper()} detected, passing to MinerU native parser...")
                 pdf_bytes = file_bytes
-                safe_file_name = "result.docx"
+                safe_file_name = f"result{file_ext}"
             else:
                 pdf_bytes = file_bytes
                 safe_file_name = "result.pdf"

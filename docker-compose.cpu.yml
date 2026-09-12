@@ -2,9 +2,8 @@
 # 专为 Mac Apple Silicon (M1/M2/M3/M4) 设计
 #
 # 使用方式:
-#   1. 构建镜像: bash scripts/build-local-cpu.sh
-#   2. 启动服务: bash scripts/start-local-cpu.sh
-#      或: docker-compose -f docker-compose.cpu.yml --env-file .env.cpu up -d
+#   1. 构建镜像并启动: bash setup.sh --mode cpu
+#   2. 手动启动: docker-compose -f docker-compose.cpu.yml --env-file .env.cpu up -d
 #   3. 查看日志: docker-compose -f docker-compose.cpu.yml logs -f
 #   4. 停止: docker-compose -f docker-compose.cpu.yml down
 #
@@ -32,8 +31,8 @@ services:
     platform: linux/amd64
     restart: unless-stopped
     ports:
-      - "${RUSTFS_PORT:-9000}:9000"
-      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"
+      # 仅绑定宿主机回环
+      - "127.0.0.1:${RUSTFS_PORT:-9000}:9000"
     volumes:
       # RustFS 数据存储（使用命名卷避免权限问题）
       - rustfs-data:/data
@@ -43,9 +42,9 @@ services:
     environment:
       # 时区设置（Mac 通过环境变量设置）
       - TZ=Asia/Shanghai
-      # RustFS 配置
-      - RUSTFS_ROOT_USER=${RUSTFS_ACCESS_KEY:-rustfsadmin}
-      - RUSTFS_ROOT_PASSWORD=${RUSTFS_SECRET_KEY:-rustfsadmin}
+      # RustFS 配置（必须设置，拒绝默认凭据）
+      - RUSTFS_ROOT_USER=${RUSTFS_ACCESS_KEY:?RUSTFS_ACCESS_KEY required}
+      - RUSTFS_ROOT_PASSWORD=${RUSTFS_SECRET_KEY:?RUSTFS_SECRET_KEY required}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 30s
@@ -62,6 +61,9 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile.cpu
+      args:
+        APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
+        PIP_MIRROR: ${PIP_MIRROR:-https://pypi.tuna.tsinghua.edu.cn/simple}
       cache_from:
         - tianshu-backend-cpu:latest
     image: tianshu-backend-cpu:latest
@@ -77,12 +79,10 @@ services:
       - ./models:/app/models:rw
       # 离线模型目录（只读）
       - ./models-offline:/models-external:ro
-      # PaddleOCR 模型缓存（持久化）
-      - ./models/paddlex_cache:/root/.paddlex:rw
-      # Hugging Face 模型缓存（持久化）
-      - ./models/huggingface_cache:/root/.cache/huggingface:rw
+      # Hugging Face 模型缓存（持久化；容器内以非 root 用户 tianshu 运行）
+      - ./models/huggingface_cache:/home/tianshu/.cache/huggingface:rw
       # ModelScope 模型缓存（持久化）
-      - ./models/modelscope_cache:/root/.cache/modelscope:rw
+      - ./models/modelscope_cache:/home/tianshu/.cache/modelscope:rw
       # 上传文件
       - ./data/uploads:/app/data/uploads:rw
       # 输出结果
@@ -103,7 +103,10 @@ services:
       # JWT 认证
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
-      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-60}
+      # 首次启动管理员账号（后端强制要求）
+      - TIANSHU_ADMIN_USERNAME=${TIANSHU_ADMIN_USERNAME:-admin}
+      - TIANSHU_ADMIN_PASSWORD=${TIANSHU_ADMIN_PASSWORD}
 
       # CORS 配置
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:80}
@@ -130,12 +133,12 @@ services:
       # RustFS 对象存储配置
       - RUSTFS_ENABLED=${RUSTFS_ENABLED:-true}
       - RUSTFS_ENDPOINT=${RUSTFS_ENDPOINT:-rustfs:9000}
-      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY:-rustfsadmin}
-      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY:-rustfsadmin}
+      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY}
+      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY}
       - RUSTFS_BUCKET=${RUSTFS_BUCKET:-ts-img}
       - RUSTFS_SECURE=${RUSTFS_SECURE:-false}
-      # Mac 访问宿主机使用 host.docker.internal
-      - RUSTFS_PUBLIC_URL=${RUSTFS_PUBLIC_URL:-http://host.docker.internal:9000}
+      # RustFS 端口绑定在宿主机回环，浏览器可直接访问 127.0.0.1
+      - RUSTFS_PUBLIC_URL=${RUSTFS_PUBLIC_URL:-http://127.0.0.1:9000}
 
       # 模型下载配置（本地模式）
       - MODEL_DOWNLOAD_SOURCE=${MODEL_DOWNLOAD_SOURCE:-local}
@@ -170,6 +173,9 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile.cpu
+      args:
+        APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
+        PIP_MIRROR: ${PIP_MIRROR:-https://pypi.tuna.tsinghua.edu.cn/simple}
       cache_from:
         - tianshu-backend-cpu:latest
     image: tianshu-backend-cpu:latest
@@ -179,7 +185,7 @@ services:
     # CPU 模式命令（传递 --accelerator cpu）
     command: ["worker", "python", "litserve_worker.py", "--accelerator", "cpu"]
     ports:
-      - "${WORKER_PORT:-8001}:8001"
+      - "127.0.0.1:${WORKER_PORT:-8001}:8001"
     volumes:
       # 源码挂载（开发模式 - 修改后需重启容器）
       - ./backend:/app/backend:rw
@@ -187,12 +193,10 @@ services:
       - ./models:/app/models:rw
       # 离线模型目录（只读）
       - ./models-offline:/models-external:ro
-      # PaddleOCR 模型缓存
-      - ./models/paddlex_cache:/root/.paddlex:rw
-      # Hugging Face 模型缓存
-      - ./models/huggingface_cache:/root/.cache/huggingface:rw
+      # Hugging Face 模型缓存（容器内以非 root 用户 tianshu 运行）
+      - ./models/huggingface_cache:/home/tianshu/.cache/huggingface:rw
       # ModelScope 模型缓存
-      - ./models/modelscope_cache:/root/.cache/modelscope:rw
+      - ./models/modelscope_cache:/home/tianshu/.cache/modelscope:rw
       # 上传文件（读写 - 需要写入转换后的 PDF）
       - ./data/uploads:/app/data/uploads:rw
       # 输出结果
@@ -241,11 +245,12 @@ services:
       # RustFS 对象存储配置
       - RUSTFS_ENABLED=${RUSTFS_ENABLED:-true}
       - RUSTFS_ENDPOINT=${RUSTFS_ENDPOINT:-rustfs:9000}
-      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY:-rustfsadmin}
-      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY:-rustfsadmin}
+      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY}
+      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY}
       - RUSTFS_BUCKET=${RUSTFS_BUCKET:-ts-img}
       - RUSTFS_SECURE=${RUSTFS_SECURE:-false}
-      - RUSTFS_PUBLIC_URL=${RUSTFS_PUBLIC_URL:-http://host.docker.internal:9000}
+      # RustFS 端口绑定在宿主机回环，浏览器可直接访问 127.0.0.1
+      - RUSTFS_PUBLIC_URL=${RUSTFS_PUBLIC_URL:-http://127.0.0.1:9000}
 
       # Redis 队列配置（可选）
       - REDIS_QUEUE_ENABLED=${REDIS_QUEUE_ENABLED:-false}
@@ -283,6 +288,8 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
       cache_from:
         - tianshu-frontend:latest
     image: tianshu-frontend:latest

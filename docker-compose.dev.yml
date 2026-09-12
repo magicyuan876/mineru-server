@@ -24,13 +24,17 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
+        PIP_MIRROR: ${PIP_MIRROR:-https://mirrors.aliyun.com/pypi/simple/}
       target: dependencies  # 只构建到依赖阶段，代码通过挂载
     image: tianshu-backend:dev
     container_name: tianshu-backend-dev
     restart: unless-stopped
     ports:
       - "8000:8000"
-      - "5678:5678"  # Python debugpy
+      # debugpy 仅绑定宿主机回环，避免调试端口暴露到网络（未认证 RCE 风险）
+      - "127.0.0.1:5678:5678"  # Python debugpy
     volumes:
       # 挂载源代码（支持热重载）
       - ./backend:/app/backend:rw
@@ -53,13 +57,16 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
 
-      # JWT 认证（开发用密钥）
-      - JWT_SECRET_KEY=dev-secret-key-change-in-production
+      # JWT 认证（密钥必须从环境/.env 注入，拒绝使用硬编码默认值）
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY required}
       - JWT_ALGORITHM=HS256
-      - ACCESS_TOKEN_EXPIRE_MINUTES=1440  # 24小时
+      - JWT_EXPIRE_MINUTES=1440  # 24小时
+      # 首次启动管理员账号（后端强制要求）
+      - TIANSHU_ADMIN_USERNAME=${TIANSHU_ADMIN_USERNAME:-admin}
+      - TIANSHU_ADMIN_PASSWORD=${TIANSHU_ADMIN_PASSWORD}
 
-      # CORS 配置（开发环境允许所有）
-      - ALLOWED_ORIGINS=*
+      # CORS 配置（开发环境默认仅本机前端端口）
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
 
       # GPU 配置
       - CUDA_VISIBLE_DEVICES=0
@@ -102,13 +109,17 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
+        PIP_MIRROR: ${PIP_MIRROR:-https://mirrors.aliyun.com/pypi/simple/}
       target: dependencies
     image: tianshu-backend:dev
     container_name: tianshu-worker-dev
     restart: unless-stopped
     ports:
       - "8001:8001"
-      - "5679:5679"  # Python debugpy
+      # debugpy 仅绑定宿主机回环
+      - "127.0.0.1:5679:5679"  # Python debugpy
     volumes:
       # 挂载源代码
       - ./backend:/app/backend:rw
@@ -171,12 +182,15 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
+        PIP_MIRROR: ${PIP_MIRROR:-https://mirrors.aliyun.com/pypi/simple/}
       target: dependencies
     image: tianshu-backend:dev
     container_name: tianshu-mcp-dev
     restart: unless-stopped
     ports:
-      - "8002:8002"
+      - "127.0.0.1:8002:8002"
     volumes:
       # 挂载源代码
       - ./backend:/app/backend:rw
@@ -186,9 +200,11 @@ services:
       - ENV=development
       - DEBUG=true
       - LOG_LEVEL=DEBUG
-      - HOST=0.0.0.0
-      - PORT=8002
-      - API_URL=http://backend-dev:8000
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8002
+      - API_BASE_URL=http://backend-dev:8000
+      - MCP_API_KEYS=${MCP_API_KEYS:-}
+      - TIANSHU_API_KEY=${TIANSHU_API_KEY:-}
       - RELOAD=true
     working_dir: /app/backend
     command: ["python", "mcp_server.py"]

@@ -159,11 +159,7 @@ class StandardOutputNormalizer(BaseOutputNormalizer):
         查找并重命名为标准名称：result.json
         """
         # 查找所有 .json 文件（排除子目录中的临时文件）
-        json_files = [
-            f
-            for f in output_dir.rglob("*.json")
-            if not f.parent.name.startswith("page_")  # 排除 PaddleOCR-VL 的分页文件
-        ]
+        json_files = list(output_dir.rglob("*.json"))
 
         if not json_files:
             logger.info("ℹ️  No JSON files found")

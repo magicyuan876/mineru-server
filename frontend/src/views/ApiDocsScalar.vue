@@ -61,7 +61,7 @@ const apiTranslations: Record<string, string> = {
   'API根路径': 'API Root',
   '健康检查接口': 'Health Check',
   '列出所有可用的处理引擎': 'List All Available Processing Engines',
-  '无需认证。返回系统中所有可用的处理引擎信息。': 'No authentication required. Returns information about all available processing engines in the system.',
+  '需要认证。返回系统中所有可用的处理引擎信息。': 'Requires authentication. Returns information about all available processing engines in the system.',
 
   // 任务管理
   '提交文档解析任务': 'Submit Document Parsing Task',
@@ -72,7 +72,7 @@ const apiTranslations: Record<string, string> = {
   '需要认证。用户只能查看自己的任务，管理员可以查看所有任务。': 'Requires authentication. Users can only view their own tasks, administrators can view all tasks.',
   '当任务完成时，会自动返回解析后的内容（data 字段）': 'When the task is completed, the parsed content will be automatically returned (data field)',
 
-  '取消任务（仅限 pending 状态）': 'Cancel Task (pending status only)',
+  '取消任务：仅对 pending / processing / paused 状态的任务生效': 'Cancel Task (only effective for tasks in pending/processing/paused status)',
   '需要认证。用户只能取消自己的任务，管理员可以取消任何任务。': 'Requires authentication. Users can only cancel their own tasks, administrators can cancel any task.',
 
   // 队列管理
@@ -139,7 +139,7 @@ const apiTranslations: Record<string, string> = {
 
   // 参数描述
   '文件: PDF/图片/Office/HTML/音频/视频等多种格式': 'File: PDF/Image/Office/HTML/Audio/Video and other formats',
-  '处理后端: auto (自动选择) | pipeline/paddleocr-vl (文档) | sensevoice (音频) | video (视频) | fasta/genbank (专业格式)': 'Processing backend: auto (auto-select) | pipeline/paddleocr-vl (document) | sensevoice (audio) | video (video) | fasta/genbank (specialized formats)',
+  '处理后端: pipeline, hybrid-auto-engine, vlm-auto-engine, hybrid-http-client, vlm-http-client, sensevoice, video, etc.': 'Processing backend: pipeline, hybrid-auto-engine, vlm-auto-engine, hybrid-http-client, vlm-http-client, sensevoice, video, etc.',
   '语言: auto/ch/en/korean/japan等': 'Language: auto/ch/en/korean/japan etc.',
   '解析方法: auto/txt/ocr': 'Parsing method: auto/txt/ocr',
   '是否启用公式识别': 'Enable formula recognition',
@@ -147,7 +147,7 @@ const apiTranslations: Record<string, string> = {
   '优先级，数字越大越优先': 'Priority, higher number means higher priority',
   '视频处理时是否保留提取的音频文件': 'Whether to keep extracted audio files during video processing',
   '是否启用视频关键帧OCR识别（实验性功能）': 'Enable video keyframe OCR recognition (experimental feature)',
-  '关键帧OCR引擎: paddleocr-vl': 'Keyframe OCR engine: paddleocr-vl',
+  '关键帧OCR引擎: mineru': 'Keyframe OCR engine: mineru',
   '是否保留提取的关键帧图像': 'Whether to keep extracted keyframe images',
   '是否启用水印去除（支持 PDF/图片）': 'Enable watermark removal (supports PDF/images)',
   '水印检测置信度阈值（0.0-1.0，推荐 0.35）': 'Watermark detection confidence threshold (0.0-1.0, recommended 0.35)',

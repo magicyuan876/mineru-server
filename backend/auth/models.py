@@ -5,8 +5,8 @@ MinerU Tianshu - Authentication Models
 定义用户、角色、权限、API Key 等核心数据结构
 """
 
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 
@@ -89,10 +89,16 @@ class User(BaseModel):
     sso_subject: Optional[str] = None  # SSO 用户唯一标识
     created_at: datetime
     last_login: Optional[datetime] = None
+    api_key_scopes: Optional[List[str]] = None  # API Key 作用域，None 表示不限
 
     def has_permission(self, permission: Permission) -> bool:
         """检查用户是否拥有指定权限"""
-        return permission in ROLE_PERMISSIONS.get(self.role, [])
+        if permission not in ROLE_PERMISSIONS.get(self.role, []):
+            return False
+        # API Key 携带作用域时，还需落在作用域白名单内
+        if self.api_key_scopes is not None:
+            return permission.value in self.api_key_scopes
+        return True
 
     def has_role(self, role: UserRole) -> bool:
         """检查用户是否拥有指定角色或更高权限"""
@@ -100,6 +106,17 @@ class User(BaseModel):
         user_level = role_hierarchy.index(self.role)
         required_level = role_hierarchy.index(role)
         return user_level >= required_level
+
+
+class RegisterRequest(BaseModel):
+    """注册请求（公开注册入口，不允许指定角色，角色恒为普通用户）"""
+
+    username: str = Field(..., min_length=3, max_length=50, pattern="^[a-zA-Z0-9_-]+$")
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=100)
+    full_name: Optional[str] = Field(None, max_length=100)
+    # 管理员在系统配置中设置邀请码后，注册时必须携带
+    invite_code: Optional[str] = Field(None, max_length=100)
 
 
 class UserCreate(BaseModel):
@@ -149,6 +166,8 @@ class TokenData(BaseModel):
     user_id: str
     username: str
     role: UserRole
+    jti: Optional[str] = None  # Token 唯一标识，用于吊销
+    epoch: int = 0  # 签发时的令牌代次，改密后旧令牌失效
 
 
 class APIKey(BaseModel):
@@ -169,7 +188,19 @@ class APIKeyCreate(BaseModel):
     """创建 API Key 请求"""
 
     name: str = Field(..., min_length=1, max_length=100)
-    expires_days: Optional[int] = Field(None, gt=0, le=3650)  # 最长 10 年
+    expires_days: int = Field(90, gt=0, le=3650)  # 默认 90 天，最长 10 年，必须限期
+    scopes: Optional[List[str]] = None  # 权限作用域（Permission 枚举值），None 表示不限
+
+    @field_validator("scopes")
+    @classmethod
+    def validate_scopes(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        valid = {p.value for p in Permission}
+        invalid = [s for s in v if s not in valid]
+        if invalid:
+            raise ValueError(f"Invalid scopes: {invalid}")
+        return v
 
 
 class APIKeyResponse(BaseModel):

@@ -103,6 +103,21 @@
             />
           </div>
 
+          <!-- 邀请码（管理员开启邀请码注册时显示） -->
+          <div v-if="systemConfig.registration_invite_required">
+            <label for="invite_code" class="block text-sm font-medium text-gray-700 mb-1">
+              {{ $t('auth.inviteCode') }} *
+            </label>
+            <input
+              id="invite_code"
+              v-model="form.invite_code"
+              type="text"
+              required
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              :placeholder="$t('auth.inviteCodePlaceholder')"
+            />
+          </div>
+
           <!-- 注册按钮 -->
           <button
             type="submit"
@@ -155,10 +170,11 @@ const form = reactive({
   email: '',
   password: '',
   full_name: '',
+  invite_code: '',
 })
 
 const confirmPassword = ref('')
-const allowRegistration = ref(true) // 默认允许注册
+const allowRegistration = ref(false) // 默认不允许注册，加载配置后再放开
 const systemConfig = ref<SystemConfig>({
   system_name: 'MinerU Tianshu',
   system_logo: '',
@@ -199,8 +215,8 @@ async function loadSystemConfig() {
     document.title = `${systemConfig.value.system_name} - 注册`
   } catch (error) {
     console.error('Failed to load system config:', error)
-    // 失败时使用默认配置
-    allowRegistration.value = true
+    // 失败时 fail-closed，隐藏注册表单
+    allowRegistration.value = false
   }
 }
 

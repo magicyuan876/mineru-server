@@ -55,9 +55,15 @@ check_environment() {
             exit 1
         fi
 
-        if [ "$JWT_SECRET_KEY" = "CHANGE_THIS_TO_A_SECURE_RANDOM_STRING_IN_PRODUCTION" ]; then
-            log_warning "JWT_SECRET_KEY is using default value, must be changed for production!"
-        fi
+        # 已知占位符一律拒绝启动（fail-closed），防止弱密钥上线
+        JWT_PLACEHOLDERS="your-secret-key-change-in-production dev-secret-key-change-in-production cpu-dev-secret-key-change-in-production temp-secret-key CHANGE_THIS_TO_A_SECURE_RANDOM_STRING_IN_PRODUCTION"
+        for placeholder in $JWT_PLACEHOLDERS; do
+            if [ "$JWT_SECRET_KEY" = "$placeholder" ]; then
+                log_error "JWT_SECRET_KEY is a known placeholder: $placeholder"
+                log_error "Generate a random one: openssl rand -hex 32 (or run setup.sh)"
+                exit 1
+            fi
+        done
     fi
 }
 
@@ -72,6 +78,16 @@ initialize_directories() {
     mkdir -p /app/data/output
     mkdir -p /app/logs
 
+    # 容器以非 root 用户运行时，挂载卷的属主可能不可写，提前给出明确报错
+    local dir
+    for dir in /app/models /app/data/uploads /app/data/output /app/logs; do
+        if [ ! -w "$dir" ]; then
+            log_error "Directory $dir is not writable by the container user (tianshu, UID 10001)."
+            log_error "Fix on host: chmod -R a+rwX <host dir>，或参考 setup.sh create_directories 的处理"
+            exit 1
+        fi
+    done
+
     log_success "Directory structure initialized"
 }
 
@@ -84,9 +100,10 @@ setup_mineru_config() {
     log_info "Setting up MinerU configuration (mineru.json)..."
 
     # 该文件由 download_models.py 生成到共享卷 /app/models 中
+    # 目标路径随容器运行用户变化（非 root 时为 /home/tianshu）
     CONFIG_SRC="/app/models/mineru.json"
     CONFIG_FILENAME="${MINERU_TOOLS_CONFIG_JSON:-mineru.json}"
-    CONFIG_DEST="/root/${CONFIG_FILENAME}"
+    CONFIG_DEST="${HOME:-/root}/${CONFIG_FILENAME}"
 
     if [ -f "$CONFIG_SRC" ]; then
         cp "$CONFIG_SRC" "${CONFIG_DEST}"
@@ -133,12 +150,6 @@ check_models() {
     fi
 
     # Check key models
-    if [ -d "$MODEL_PATH/paddleocr_vl" ]; then
-        log_success "PaddleOCR-VL model found"
-    else
-        log_warning "PaddleOCR-VL model not found, will be automatically downloaded on first run"
-    fi
-
     if [ -d "$MODEL_PATH/sensevoice" ]; then
         log_success "SenseVoice model found"
     else
@@ -195,11 +206,6 @@ check_gpu() {
 
     # Check PyTorch
     python -c "import torch; print('PyTorch CUDA:', torch.cuda.is_available())" 2>&1 | while read line; do
-        log_info "$line"
-    done
-
-    # Check PaddlePaddle
-    python -c "import paddle; print('Paddle CUDA:', paddle.device.is_compiled_with_cuda())" 2>&1 | while read line; do
         log_info "$line"
     done
 

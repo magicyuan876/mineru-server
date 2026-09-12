@@ -60,7 +60,6 @@ main() {
 
     # 创建必要的目录
     mkdir -p /root/.cache/huggingface/hub
-    mkdir -p /root/.paddleocr/models
     mkdir -p /root/.cache/watermark_models
     mkdir -p /app/models/sensevoice
     mkdir -p /app/models/paraformer
@@ -70,13 +69,6 @@ main() {
         log_info "Copying HuggingFace models (MinerU)..."
         cp -r /models-external/huggingface/hub/* /root/.cache/huggingface/hub/ 2>/dev/null || true
         log_success "HuggingFace models copied"
-    fi
-
-    # 复制 PaddleOCR 模型
-    if [ -d "/models-external/.paddleocr/models" ]; then
-        log_info "Copying PaddleOCR models..."
-        cp -r /models-external/.paddleocr/models/* /root/.paddleocr/models/ 2>/dev/null || true
-        log_success "PaddleOCR models copied"
     fi
 
     # 复制 SenseVoice 模型

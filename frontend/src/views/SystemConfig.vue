@@ -128,6 +128,21 @@
           <p class="mt-1 ml-6 text-xs text-gray-500">{{ $t('systemConfig.allowRegistrationHelp') }}</p>
         </div>
 
+        <!-- 注册邀请码 -->
+        <div>
+          <label for="registration_invite_code" class="block text-sm font-medium text-gray-700 mb-2">
+            {{ $t('systemConfig.inviteCode') }}
+          </label>
+          <input
+            id="registration_invite_code"
+            v-model="formData.registration_invite_code"
+            type="text"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            :placeholder="$t('systemConfig.inviteCodePlaceholder')"
+          />
+          <p class="mt-1 text-xs text-gray-500">{{ $t('systemConfig.inviteCodeHelp') }}</p>
+        </div>
+
         <!-- 按钮组 -->
         <div class="flex justify-end space-x-4 pt-4 border-t border-gray-200">
           <button
@@ -178,13 +193,164 @@
         </div>
       </div>
     </div>
+
+    <!-- 图片描述（多模态大模型）配置 -->
+    <div v-if="!loading" class="mt-6 bg-white rounded-lg shadow-md p-6">
+      <h2 class="text-lg font-semibold text-gray-900 mb-1">{{ $t('imageCaption.title') }}</h2>
+      <p class="mb-6 text-sm text-gray-600">{{ $t('imageCaption.description') }}</p>
+
+      <form @submit.prevent="handleImageCaptionSubmit" class="space-y-6">
+        <!-- 启用开关 -->
+        <div>
+          <label class="flex items-center">
+            <input
+              v-model="imageCaptionForm.enabled"
+              type="checkbox"
+              class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <span class="ml-2 text-sm font-medium text-gray-700">
+              {{ $t('imageCaption.enabled') }}
+            </span>
+          </label>
+          <p class="mt-1 ml-6 text-xs text-gray-500">{{ $t('imageCaption.enabledHelp') }}</p>
+        </div>
+
+        <!-- API Base -->
+        <div>
+          <label for="image_caption_api_base" class="block text-sm font-medium text-gray-700 mb-2">
+            {{ $t('imageCaption.apiBase') }}
+          </label>
+          <input
+            id="image_caption_api_base"
+            v-model="imageCaptionForm.api_base"
+            type="text"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            :placeholder="$t('imageCaption.apiBasePlaceholder')"
+          />
+        </div>
+
+        <!-- API Key -->
+        <div>
+          <label for="image_caption_api_key" class="block text-sm font-medium text-gray-700 mb-2">
+            {{ $t('imageCaption.apiKey') }}
+          </label>
+          <input
+            id="image_caption_api_key"
+            v-model="imageCaptionForm.api_key"
+            type="password"
+            autocomplete="new-password"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            :placeholder="$t('imageCaption.apiKeyPlaceholder')"
+          />
+        </div>
+
+        <!-- 模型名 -->
+        <div>
+          <label for="image_caption_model" class="block text-sm font-medium text-gray-700 mb-2">
+            {{ $t('imageCaption.model') }}
+          </label>
+          <input
+            id="image_caption_model"
+            v-model="imageCaptionForm.model"
+            type="text"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            :placeholder="$t('imageCaption.modelPlaceholder')"
+          />
+        </div>
+
+        <!-- Prompt -->
+        <div>
+          <label for="image_caption_prompt" class="block text-sm font-medium text-gray-700 mb-2">
+            {{ $t('imageCaption.prompt') }}
+          </label>
+          <textarea
+            id="image_caption_prompt"
+            v-model="imageCaptionForm.prompt"
+            rows="3"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            :placeholder="$t('imageCaption.promptPlaceholder')"
+          ></textarea>
+        </div>
+
+        <!-- 最大图片数 / 并发数 / 超时秒数 -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label for="image_caption_max_images" class="block text-sm font-medium text-gray-700 mb-2">
+              {{ $t('imageCaption.maxImages') }}
+            </label>
+            <input
+              id="image_caption_max_images"
+              v-model.number="imageCaptionForm.max_images"
+              type="number"
+              min="1"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+          <div>
+            <label for="image_caption_concurrency" class="block text-sm font-medium text-gray-700 mb-2">
+              {{ $t('imageCaption.concurrency') }}
+            </label>
+            <input
+              id="image_caption_concurrency"
+              v-model.number="imageCaptionForm.concurrency"
+              type="number"
+              min="1"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            <p class="mt-1 text-xs text-gray-500">{{ $t('imageCaption.concurrencyHelp') }}</p>
+          </div>
+          <div>
+            <label for="image_caption_timeout" class="block text-sm font-medium text-gray-700 mb-2">
+              {{ $t('imageCaption.timeout') }}
+            </label>
+            <input
+              id="image_caption_timeout"
+              v-model.number="imageCaptionForm.timeout"
+              type="number"
+              min="1"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+        </div>
+
+        <!-- 按钮组 -->
+        <div class="flex justify-between pt-4 border-t border-gray-200">
+          <button
+            type="button"
+            @click="handleTestImageCaption"
+            :disabled="imageCaptionTesting || imageCaptionSaving"
+            class="px-4 py-2 border border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span v-if="imageCaptionTesting">{{ $t('imageCaption.testing') }}</span>
+            <span v-else>{{ $t('imageCaption.testConnection') }}</span>
+          </button>
+          <button
+            type="submit"
+            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            :disabled="imageCaptionSaving || imageCaptionTesting"
+          >
+            <span v-if="imageCaptionSaving">{{ $t('imageCaption.saving') }}</span>
+            <span v-else>{{ $t('imageCaption.save') }}</span>
+          </button>
+        </div>
+      </form>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getSystemConfig, updateSystemConfig, uploadSystemLogo, type SystemConfig } from '@/api'
+import {
+  getSystemConfig,
+  updateSystemConfig,
+  uploadSystemLogo,
+  getImageCaptionConfig,
+  testImageCaptionConnection,
+  type SystemConfig,
+  type SystemConfigUpdateRequest,
+  type ImageCaptionConfig,
+} from '@/api'
 import { toast } from '@/utils/toast'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
@@ -200,6 +366,7 @@ const originalConfig = ref<SystemConfig>({
   system_logo: '',
   show_github_star: true,
   allow_registration: true,
+  registration_invite_code: '',
 })
 
 // 表单数据
@@ -208,11 +375,122 @@ const formData = ref<SystemConfig>({
   system_logo: '',
   show_github_star: true,
   allow_registration: true,
+  registration_invite_code: '',
 })
 
 // Logo 上传相关
 const logoFileInput = ref<HTMLInputElement | null>(null)
 const logoPreviewUrl = ref<string>('')
+
+// 图片描述（多模态大模型）配置
+const imageCaptionSaving = ref(false)
+const imageCaptionTesting = ref(false)
+
+const imageCaptionOriginal = ref<ImageCaptionConfig>({
+  enabled: false,
+  api_base: '',
+  api_key: '',
+  model: '',
+  prompt: '',
+  max_images: 20,
+  concurrency: 4,
+  timeout: 60,
+})
+
+const imageCaptionForm = ref<ImageCaptionConfig>({ ...imageCaptionOriginal.value })
+
+/**
+ * 加载图片描述配置
+ */
+async function loadImageCaptionConfig() {
+  try {
+    const response = await getImageCaptionConfig()
+    imageCaptionOriginal.value = { ...response.config }
+    imageCaptionForm.value = { ...response.config }
+  } catch (error: any) {
+    console.error('Failed to load image caption config:', error)
+    toast.error(t('imageCaption.loadError'))
+  }
+}
+
+/**
+ * 保存图片描述配置（只提交变更过的字段；api_key 保持掩码值时不提交）
+ */
+async function handleImageCaptionSubmit() {
+  try {
+    imageCaptionSaving.value = true
+
+    const form = imageCaptionForm.value
+    const original = imageCaptionOriginal.value
+    const updates: SystemConfigUpdateRequest = {}
+    if (form.enabled !== original.enabled) {
+      updates.image_caption_enabled = form.enabled
+    }
+    if (form.api_base !== original.api_base) {
+      updates.image_caption_api_base = form.api_base
+    }
+    if (form.api_key !== original.api_key) {
+      updates.image_caption_api_key = form.api_key
+    }
+    if (form.model !== original.model) {
+      updates.image_caption_model = form.model
+    }
+    if (form.prompt !== original.prompt) {
+      updates.image_caption_prompt = form.prompt
+    }
+    if (form.max_images !== original.max_images) {
+      updates.image_caption_max_images = form.max_images
+    }
+    if (form.concurrency !== original.concurrency) {
+      updates.image_caption_concurrency = form.concurrency
+    }
+    if (form.timeout !== original.timeout) {
+      updates.image_caption_timeout = form.timeout
+    }
+
+    if (Object.keys(updates).length === 0) {
+      toast.success(t('imageCaption.noChanges'))
+      return
+    }
+
+    await updateSystemConfig(updates)
+    imageCaptionOriginal.value = { ...form }
+
+    toast.success(t('imageCaption.saveSuccess'))
+  } catch (error: any) {
+    console.error('Failed to update image caption config:', error)
+    toast.error(error.response?.data?.detail || t('imageCaption.saveError'))
+  } finally {
+    imageCaptionSaving.value = false
+  }
+}
+
+/**
+ * 测试图片描述模型连接（使用表单中未保存的值）
+ */
+async function handleTestImageCaption() {
+  try {
+    imageCaptionTesting.value = true
+
+    const result = await testImageCaptionConnection({
+      api_base: imageCaptionForm.value.api_base,
+      api_key: imageCaptionForm.value.api_key,
+      model: imageCaptionForm.value.model,
+      timeout: imageCaptionForm.value.timeout,
+    })
+
+    if (result.success) {
+      toast.success(result.message || t('imageCaption.testSuccess', { latency: result.latency_ms }))
+    } else {
+      toast.error(result.message || t('imageCaption.testFailed'))
+    }
+  } catch (error: any) {
+    console.error('Failed to test image caption connection:', error)
+    toast.error(error.response?.data?.detail || t('imageCaption.testError'))
+  } finally {
+    imageCaptionTesting.value = false
+  }
+}
 
 /**
  * 加载系统配置
@@ -316,6 +594,13 @@ async function handleSubmit() {
     if (formData.value.allow_registration !== originalConfig.value.allow_registration) {
       updates.allow_registration = formData.value.allow_registration
     }
+    // 邀请码为掩码值时表示未修改，不提交；清空则提交空字符串以移除邀请码
+    if (
+      formData.value.registration_invite_code !== originalConfig.value.registration_invite_code &&
+      formData.value.registration_invite_code !== '********'
+    ) {
+      updates.registration_invite_code = formData.value.registration_invite_code ?? ''
+    }
 
     if (Object.keys(updates).length === 0) {
       toast.success(t('systemConfig.noChanges'))
@@ -360,5 +645,6 @@ function handleImageError(event: Event) {
 
 onMounted(() => {
   loadConfig()
+  loadImageCaptionConfig()
 })
 </script>

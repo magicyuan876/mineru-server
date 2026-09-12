@@ -12,6 +12,10 @@
 
       <div class="flex items-center gap-3">
         <template v-if="task">
+            <button v-if="['pending', 'processing', 'paused'].includes(task.status)" @click="initiateAction('cancel')" :disabled="actionLoading" class="btn btn-white text-gray-600 border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 btn-sm flex items-center shadow-sm transition-all disabled:opacity-50" :title="$t('task.cancelTaskTip')">
+              <XCircle :class="{'animate-pulse': actionLoading && currentAction === 'cancel'}" class="w-4 h-4 mr-1.5" />
+              <span>{{ $t('task.cancelTask') }}</span>
+            </button>
             <button v-if="task.status === 'failed'" @click="initiateAction('retry')" :disabled="actionLoading" class="btn btn-white text-blue-600 border-gray-200 hover:bg-blue-50 btn-sm flex items-center shadow-sm transition-all disabled:opacity-50">
               <RotateCw :class="{'animate-spin': actionLoading && currentAction === 'retry'}" class="w-4 h-4 mr-1.5" />
               <span>重试任务</span>
@@ -46,6 +50,15 @@
       <div v-if="['pending', 'processing', 'paused'].includes(task.status)" class="max-w-3xl mx-auto mt-16 space-y-6 px-4">
          <div class="card p-10 text-center shadow-sm">
             <h2 class="text-xl font-semibold text-gray-900 mb-2">处理中...</h2>
+            <div v-if="task.is_parent && task.subtask_progress" class="mt-6 max-w-md mx-auto">
+              <div class="flex justify-between text-sm text-gray-600 mb-2">
+                <span>{{ $t('task.subtaskProgress') }}</span>
+                <span>{{ task.subtask_progress.completed }}/{{ task.subtask_progress.total }} ({{ task.subtask_progress.percentage }}%)</span>
+              </div>
+              <div class="w-full bg-gray-200 rounded-full h-2">
+                <div class="bg-primary-600 h-2 rounded-full transition-all" :style="{ width: task.subtask_progress.percentage + '%' }"></div>
+              </div>
+            </div>
             <div class="mt-8 flex justify-center"><LoadingSpinner size="lg" /></div>
          </div>
       </div>
@@ -147,7 +160,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useTaskStore } from '@/stores'
-import { ArrowLeft, AlertCircle, RefreshCw, FileText, Columns, Download, RotateCw, Eraser, Pause, Image, Table, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, AlertCircle, RefreshCw, FileText, Columns, Download, RotateCw, Eraser, Pause, Image, Table, Trash2, XCircle } from 'lucide-vue-next'
 import StatusBadge from '@/components/StatusBadge.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import MarkdownViewer from '@/components/MarkdownViewer.vue'
@@ -319,9 +332,9 @@ const showConfirm = ref(false)
 const confirmTitle = ref('')
 const confirmMessage = ref('')
 const confirmType = ref<'info' | 'warning' | 'danger'>('info')
-const currentAction = ref<'retry' | 'clearCache' | 'delete' | null>(null)
+const currentAction = ref<'retry' | 'clearCache' | 'delete' | 'cancel' | null>(null)
 
-function initiateAction(action: 'retry' | 'clearCache' | 'delete') {
+function initiateAction(action: 'retry' | 'clearCache' | 'delete' | 'cancel') {
   currentAction.value = action
   if (action === 'retry') {
     confirmTitle.value = '重试任务'; confirmMessage.value = '确定重试吗？'; confirmType.value = 'info'
@@ -329,6 +342,8 @@ function initiateAction(action: 'retry' | 'clearCache' | 'delete') {
     confirmTitle.value = '清理缓存'; confirmMessage.value = '确定清理吗？'; confirmType.value = 'warning'
   } else if (action === 'delete') {
     confirmTitle.value = '删除任务'; confirmMessage.value = '彻底删除该任务及文件？不可恢复。'; confirmType.value = 'danger'
+  } else if (action === 'cancel') {
+    confirmTitle.value = t('task.cancelTask'); confirmMessage.value = t('task.cancelTaskConfirm'); confirmType.value = 'warning'
   }
   showConfirm.value = true
 }
@@ -343,6 +358,8 @@ async function executeAction() {
       await taskStore.clearTaskCache(taskId.value); await refreshTask();
     } else if (currentAction.value === 'delete') {
       await taskStore.deleteTask(taskId.value); router.back();
+    } else if (currentAction.value === 'cancel') {
+      await taskStore.cancelTask(taskId.value); await refreshTask();
     }
   } catch (err: any) { error.value = err.message || 'Action failed' }
   finally { actionLoading.value = false; currentAction.value = null }

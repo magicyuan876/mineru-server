@@ -101,7 +101,7 @@ const form = reactive({
   password: '',
 })
 
-const allowRegistration = ref(true) // 默认允许注册
+const allowRegistration = ref(false) // 默认不允许注册，加载配置后再放开
 const systemConfig = ref<SystemConfig>({
   system_name: 'MinerU Tianshu',
   system_logo: '',
@@ -138,8 +138,8 @@ async function loadSystemConfig() {
     document.title = `${systemConfig.value.system_name} - 登录`
   } catch (error) {
     console.error('Failed to load system config:', error)
-    // 失败时使用默认配置
-    allowRegistration.value = true
+    // 失败时 fail-closed，隐藏注册入口
+    allowRegistration.value = false
   }
 }
 

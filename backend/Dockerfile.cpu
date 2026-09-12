@@ -12,9 +12,19 @@
 #   - 适合本地开发调试，不适合生产环境
 
 # ============================================================================
+# 镜像源配置（构建参数）：
+#   - 默认使用国内镜像（阿里云 apt / 清华 PyPI）
+#   - 海外网络: docker buildx build --build-arg APT_MIRROR= --build-arg PIP_MIRROR=https://pypi.org/simple ...
+# ============================================================================
+ARG APT_MIRROR=mirrors.aliyun.com
+ARG PIP_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
+
+# ============================================================================
 # Stage 1: Base Image (CPU-only, no CUDA)
 # ============================================================================
 FROM python:3.12-slim-bookworm AS base
+ARG APT_MIRROR
+ARG PIP_MIRROR
 
 # 设置环境变量
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -24,6 +34,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_CACHE_DIR=/root/.cache/pip
 
 # 安装系统依赖（与 GPU 版本相同，但无 CUDA）
+# [网络优化] APT_MIRROR 非空时切换 apt 源（默认阿里云；海外构建传 --build-arg APT_MIRROR= 保留官方源）
+RUN if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     git \
@@ -57,13 +72,14 @@ RUN apt-get update && \
 # 升级 pip（使用国内镜像源，增加超时时间）
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install --upgrade pip setuptools wheel \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -i ${PIP_MIRROR} \
     --default-timeout=300
 
 # ============================================================================
 # Stage 2: Dependencies Installation (CPU-only)
 # ============================================================================
 FROM base AS dependencies
+ARG PIP_MIRROR
 
 WORKDIR /tmp
 
@@ -71,70 +87,62 @@ WORKDIR /tmp
 COPY backend/requirements.txt /tmp/requirements.txt
 
 # 分步安装依赖（CPU 版本）
-# Step 1: 安装 PaddlePaddle CPU 版本
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install paddlepaddle==3.2.0 \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
-    --default-timeout=600 \
-    --retries 5
-
-# Step 2: 安装 PyTorch CPU 版本 (包含 torchaudio for SenseVoice/FunASR)
+# Step 1: 安装 PyTorch CPU 版本 (包含 torchaudio for SenseVoice/FunASR)
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
     --index-url https://download.pytorch.org/whl/cpu \
     --default-timeout=600 \
     --retries 5
 
-# Step 3: 预先安装 Python 3.12 关键依赖
+# Step 2: 预先安装 Python 3.12 关键依赖
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install "kiwisolver>=1.4.5" "Pillow>=11.0.0" \
     "numpy>=1.26.0,<2.0.0" "setuptools>=75.0.0" "lxml>=5.3.0" \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -i ${PIP_MIRROR} \
     --default-timeout=300 \
     --retries 5
 
-# Step 3.5: 安装 transformers 核心依赖（regex、huggingface-hub 等）
+# Step 2.5: 安装 transformers 核心依赖（regex、huggingface-hub 等）
 RUN --mount=type=cache,target=/root/.cache/pip \
     echo "Installing transformers dependencies..." && \
     pip install regex packaging filelock requests tqdm \
     "huggingface-hub>=0.23.2,<1.0" \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -i ${PIP_MIRROR} \
     --default-timeout=300 \
     --retries 5
 
-# Step 4: 安装 MinerU 及其依赖（允许自动解析依赖）
+# Step 3: 安装 MinerU 及其依赖（允许自动解析依赖）
 RUN --mount=type=cache,target=/root/.cache/pip \
     echo "Installing MinerU with dependencies..." && \
-    pip install "mineru[core]>=3.0.9" \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    pip install "mineru[core]>=3.4.5" \
+    -i ${PIP_MIRROR} \
     --default-timeout=600 \
     --retries 5
 
-# Step 4.5: 安装其他核心包
+# Step 3.5: 安装其他核心包
 RUN --mount=type=cache,target=/root/.cache/pip \
     echo "Installing other core packages..." && \
-    pip install paddleocr[doc-parser] \
-    transformers==4.57.6 \
+    pip install transformers==4.57.6 \
     fastapi uvicorn litserve aiohttp \
     PyMuPDF Pillow img2pdf einops easydict addict loguru modelscope \
     minio markitdown \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -i ${PIP_MIRROR} \
     --default-timeout=300 \
     --retries 5
 
-# Step 5: 确保 albumentations 版本兼容（MinerU 3.0+ 需要 >=1.4.11）
+# Step 4: 确保 albumentations 版本兼容（MinerU 3.0+ 需要 >=1.4.11）
 RUN --mount=type=cache,target=/root/.cache/pip \
     echo "Ensuring albumentations compatibility..." && \
     pip install 'albumentations>=1.4.11' \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -i ${PIP_MIRROR} \
     --default-timeout=300 \
     --retries 5
 
-# Step 6: 解析剩余依赖（使用 legacy resolver，避免回溯超时）
+# Step 5: 解析剩余依赖（使用 legacy resolver，避免回溯超时）
 RUN --mount=type=cache,target=/root/.cache/pip \
     echo "Resolving remaining dependencies with legacy resolver..." && \
     pip install -r /tmp/requirements.txt \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -i ${PIP_MIRROR} \
     --use-deprecated=legacy-resolver \
     --default-timeout=600 \
     --retries 5
@@ -166,6 +174,14 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/init-models.sh
 # 创建必要的目录
 RUN mkdir -p /app/models /app/data /app/uploads /app/output /app/logs
 
+# 非 root 运行用户
+RUN groupadd -g 10001 tianshu && \
+    useradd -u 10001 -g tianshu -m -s /bin/bash tianshu && \
+    chown -R tianshu:tianshu /app /home/tianshu
+
+# USER 指令不会自动设置 HOME，显式指定以兼容 ~/.cache、~/mineru.json 等路径解析
+ENV HOME=/home/tianshu
+
 # 设置工作目录为后端
 WORKDIR /app/backend
 
@@ -178,6 +194,8 @@ EXPOSE 8000 8001 8002
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
+
+USER tianshu
 
 # 使用 entrypoint 脚本
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
