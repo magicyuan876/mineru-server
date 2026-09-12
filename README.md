@@ -46,13 +46,6 @@
 
 ## 📝 最新更新
 
-### 2026-09-11 🚀 MinerU 3.4.5 升级
-
-- ✅ **MinerU 3.4.5 升级**：`mineru[all]>=3.4.5`，同步 `mineru-vl-utils>=1.0.5,<2`、`pypdf>=5.6.0`
-- ✅ **VLM 模型更新**：`MinerU2.5-2509-1.2B` → `MinerU2.5-Pro-2605-1.2B`（模型下载脚本、`mineru.json`、vLLM 服务同步）
-- ✅ **兼容确认**：`do_parse` API、`vlm/hybrid` 后端名（旧别名 `*-auto-engine` 仍受支持）、pipeline 模型目录结构（PP-DocLayoutV2 等）均保持不变
-- ✅ **macOS 原生支持**：Apple Silicon 自动启用 MPS 加速（`--accelerator mps`），VLM 后端自动走 MLX；音视频辅助引擎在 mac 上回退 CPU
-
 ### 2026-09-12 🚀 v2.0.0 稳定版：多模态图片描述、ZIP/EPUB 支持与系统完善
 
 - ✅ **图片描述（多模态大模型）**：解析结果中的图片可自动调用多模态大模型生成内容描述，写回 Markdown 图片 alt 与 JSON 的 img_caption；管理员在系统配置页完成启用与模型配置（OpenAI 兼容接口），支持连接测试与并发控制
@@ -64,6 +57,13 @@
 - ⚡ **性能与稳定性**：SQLite 启用 WAL 模式消除读写互斥；API 端点去阻塞化；Redis 队列与 SQLite 定期对账；子任务单事务批量创建；vLLM 容器按需冷启动
 - 🔒 **安全加固**：认证与密钥强度强制校验、文件服务鉴权与下载防护、对象存储凭据与网络收紧、依赖版本升级等系统性完善（升级前请按文档重新生成 `.env`）
 - 🔧 **修复**：图片 EXIF 方向非法导致解析失败、模型缓存随容器重建丢失、图片源文件预览失败等问题
+
+### 2026-09-11 🚀 MinerU 3.4.5 升级
+
+- ✅ **MinerU 3.4.5 升级**：`mineru[all]>=3.4.5`，同步 `mineru-vl-utils>=1.0.5,<2`、`pypdf>=5.6.0`
+- ✅ **VLM 模型更新**：`MinerU2.5-2509-1.2B` → `MinerU2.5-Pro-2605-1.2B`（模型下载脚本、`mineru.json`、vLLM 服务同步）
+- ✅ **兼容确认**：`do_parse` API、`vlm/hybrid` 后端名（旧别名 `*-auto-engine` 仍受支持）、pipeline 模型目录结构（PP-DocLayoutV2 等）均保持不变
+- ✅ **macOS 原生支持**：Apple Silicon 自动启用 MPS 加速（`--accelerator mps`），VLM 后端自动走 MLX；音视频辅助引擎在 mac 上回退 CPU
 
 ### 2026-04-12 🔧 MinerU 3.0.9 升级 & Office 格式增强
 

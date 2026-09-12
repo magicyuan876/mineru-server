@@ -44,6 +44,18 @@ English | [简体中文](./README.md)
 
 ## 📝 Latest Updates
 
+### 2026-09-12 🚀 v2.0.0 Stable: Multimodal Image Captioning, ZIP/EPUB Support & System Improvements
+
+- ✅ **Image Captioning (Multimodal LLM)**: images in parsing results can be automatically described by a multimodal LLM, written back to the Markdown image alt text and the JSON `img_caption` field; admins enable and configure the model from the system settings page (OpenAI-compatible API), with connection testing and concurrency control
+- ✅ **ZIP Archive Parsing**: uploaded zip files are automatically unpacked into parent/child tasks for batch parsing (entry count / total size limits, Zip Slip protection), with results merged per entry; EPUB format support added (MarkItDown)
+- ✅ **Invite-Code Registration**: admins can require an invite code for public registration from the settings page
+- ✅ **Task Cancellation**: cancel tasks in pending/processing/paused states (PR #83)
+- ✅ **MinerU 3.4.5 Upgrade**: native Office parsing (DOCX/XLSX/PPTX), native macOS MPS support; engines consolidated on MinerU, PaddleOCR engines removed
+- ✅ **Unified Deployment**: single interactive `setup.sh` entry point (GPU / pipeline-only / CPU / native / offline), with new pipeline-only and offline deployment options
+- ⚡ **Performance & Stability**: SQLite WAL mode eliminates read/write blocking between workers and the API; API endpoints moved off the event loop; periodic Redis↔SQLite queue reconciliation; child tasks created in a single transaction; on-demand cold start for the vLLM container
+- 🔒 **Security Hardening**: system-wide improvements including credential strength enforcement, authenticated file serving with download protection, object storage credential and network tightening, and dependency upgrades (regenerate your `.env` per the docs before upgrading)
+- 🔧 **Fixes**: image parsing failures caused by invalid EXIF orientation, model caches lost on container rebuild, and source preview failures for image files
+
 ### 2026-09-11 🚀 MinerU 3.4.5 Upgrade
 
 - ✅ **MinerU 3.4.5 Upgrade**: `mineru[all]>=3.4.5`, with `mineru-vl-utils>=1.0.5,<2` and `pypdf>=5.6.0` synced
