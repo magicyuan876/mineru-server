@@ -144,7 +144,7 @@ npm run build     # tsc && vite build → dist/
 
 ### 引擎路由（`litserve_worker.py::_process_task`）
 
-单任务处理流水线：vLLM 容器互斥切换 → 旧版 Office 转换 → PDF 拆分 → 水印去除 → 引擎分发 → 输出标准化 → 持久化。
+单任务处理流水线：vLLM 容器冷启动 → 旧版 Office 转换 → PDF 拆分 → 水印去除 → 引擎分发 → 输出标准化 → 持久化。
 
 按任务的 `backend` 字段分发：
 
@@ -155,7 +155,7 @@ npm run build     # tsc && vite build → dist/
 
 **约定**：每个引擎都在 try/except 中导入并设置 `X_AVAILABLE` 标志，缺失的可选依赖只降级对应引擎，不会拖垮整个 Worker。新增引擎时请保持此模式。
 
-`VLLMController.ensure_service()` 负责 **vLLM 容器互斥**（`tianshu-vllm-mineru`）：通过 Docker socket 停掉冲突容器以释放显存。
+`vllm-mineru` 在 compose 里是 `profiles: ["manual"]` + `restart: no`，不随 `up` 启动。`VLLMController.ensure_running()` 在任务 backend 属于 `LOCAL_VLLM_BACKENDS` 且调用方未自带 `server_url` 时，经挂载的 Docker socket **冷启动**它；容器不存在或 Docker 不可达即视为 vLLM 由外部托管，不插手。就绪判定不归它管，由 `mineru_pipeline/engine.py::_wait_for_server` 轮询 `/v1/models` 完成。
 
 ### 输出契约
 
@@ -244,7 +244,7 @@ pre-commit 钩子包含：基础文件检查（大文件 >5MB、私钥、冲突�
 - API Key 认证与 JWT 并存，新增端点记得挂 `get_current_user` / 权限依赖。
 - 文件服务端点必须保留路径逃逸防护（`is_relative_to(OUTPUT_DIR)`）。
 - pre-commit 会检查私钥与 >5MB 大文件。
-- Worker 容器挂载了 `/var/run/docker.sock`（用于 vLLM 容器互斥控制），改动相关逻辑时注意其权限敏感性。
+- Worker 容器挂载了 `/var/run/docker.sock`（用于冷启动 vLLM 容器），改动相关逻辑时注意其权限敏感性。
 
 ## 其他模块
 

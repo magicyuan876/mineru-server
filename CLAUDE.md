@@ -113,9 +113,11 @@ Dispatch is keyed on the task's `backend` string:
 Every engine is imported behind a try/except with an `X_AVAILABLE` flag, so a missing optional dependency
 degrades that one backend instead of killing the worker. Preserve that pattern when adding engines.
 
-`VLLMController.ensure_service()` enforces **mutual exclusion between vLLM containers**
-(`tianshu-vllm-mineru`) by stopping the conflicting one to free VRAM — the
-worker talks to the Docker socket to do this.
+`vllm-mineru` is `profiles: ["manual"]` + `restart: no`, so it never starts with `up`.
+`VLLMController.ensure_running()` **cold-starts it** over the mounted Docker socket when a task's
+backend is in `LOCAL_VLLM_BACKENDS` and the caller supplied no `server_url` of its own. A missing
+container (or unreachable Docker) means vLLM is externally managed and is left alone. Readiness is
+not its job — `mineru_pipeline/engine.py::_wait_for_server` polls `/v1/models` for that.
 
 ### Output contract
 

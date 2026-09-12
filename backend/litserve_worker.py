@@ -146,67 +146,44 @@ except ImportError as e:
 # ==============================================================================
 # 3. VLLM Container Controller
 # ==============================================================================
+
+# compose 中 vllm-mineru 是 profiles: ["manual"] + restart: no，不随 up 启动，
+# 由 worker 在确认某个任务要用本地 vLLM 时冷启动。
+VLLM_MINERU_CONTAINER = "tianshu-vllm-mineru"
+
+# 会落到本地 vLLM 的 backend：*-auto-engine 由 mineru_pipeline/engine.py 改写成
+# *-http-client，*-http-client 则直接用 mineru_vllm_api —— 两者都要求容器在运行。
+LOCAL_VLLM_BACKENDS = frozenset({"vlm-auto-engine", "hybrid-auto-engine", "vlm-http-client", "hybrid-http-client"})
+
+
 class VLLMController:
-    """管理 vLLM Docker 容器的互斥启动"""
+    """按需冷启动 vLLM 容器。"""
 
-    def __init__(self):
-        pass
+    def ensure_running(self, container_name: str) -> None:
+        """确保容器在运行。
 
-    def _get_client(self):
-        """按需获取 Docker 客户端"""
+        容器不存在或 Docker 不可达，说明 vLLM 由外部托管（本机直接跑 vllm serve），
+        此时无需处理。容器 status 变成 running 只代表进程起来了，vLLM 这时还在载模型，
+        就绪与否由 engine._wait_for_server 轮询 /v1/models 判定。
+        """
+        import docker
+        import docker.errors
+
         try:
-            import docker
-
-            return docker.from_env()
-        except Exception as e:
-            logger.warning(f"⚠️  Docker client init failed: {e}")
-            return None
-
-    def ensure_service(self, target_container: str, conflict_container: str):
-        """
-        确保目标容器运行，并关闭冲突容器 (严格互斥逻辑)
-        """
-        client = self._get_client()
-        if not client:
+            client = docker.from_env()
+        except docker.errors.DockerException as e:
+            logger.info(f"ℹ️  Docker unreachable ({e}), treating vLLM as externally managed")
             return
 
         try:
-            # 1. 检查并关闭冲突容器
-            try:
-                conflict = client.containers.get(conflict_container)
-                if conflict.status == "running":
-                    logger.info(f"🛑 Stopping conflicting service {conflict_container} to free VRAM...")
-                    conflict.stop()
-                    time.sleep(2)  # 等待释放
-                    logger.info(f"✅ Service {conflict_container} stopped.")
-            except Exception:
-                pass
-
-            # 2. 检查并启动目标容器
-            try:
-                target = client.containers.get(target_container)
-                if target.status == "running":
-                    return
-
-                logger.info(f"🚀 Starting service {target_container} (Manual/Cold Start)...")
-                target.start()
-
-                # 等待服务健康 (简单轮询)
-                for _ in range(30):
-                    time.sleep(1)
-                    target.reload()
-                    if target.status == "running":
-                        break
-                logger.info(f"✅ Service {target_container} started.")
-
-            except Exception as e:
-                logger.error(f"❌ Failed to start target container {target_container}: {e}")
-                raise e
+            container = client.containers.get(container_name)
+            if container.status != "running":
+                logger.info(f"🚀 Cold-starting vLLM container {container_name}")
+                container.start()
+        except docker.errors.NotFound:
+            logger.info(f"ℹ️  Container {container_name} not found, treating vLLM as externally managed")
         finally:
-            try:
-                client.close()
-            except Exception:
-                pass
+            client.close()
 
 
 # ==============================================================================
@@ -401,11 +378,9 @@ class MinerUWorkerAPI(ls.LitAPI):
             return
 
         try:
-            # 1. 智能服务切换
-            if backend in ["vlm-auto-engine", "hybrid-auto-engine"] and self.mineru_vllm_api:
-                self.vllm_controller.ensure_service(
-                    target_container="tianshu-vllm-mineru", conflict_container="tianshu-vllm-paddleocr"
-                )
+            # 1. 冷启动本地 vLLM 容器；调用方自带 server_url 时指向的是外部服务，不插手
+            if backend in LOCAL_VLLM_BACKENDS and self.mineru_vllm_api and not options.get("server_url"):
+                self.vllm_controller.ensure_running(VLLM_MINERU_CONTAINER)
 
             file_ext = Path(file_path).suffix.lower()
 
@@ -579,9 +554,6 @@ class MinerUWorkerAPI(ls.LitAPI):
 
         output_dir = Path(self.output_dir) / Path(file_path).stem
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        if "http-client" in options.get("parse_mode", "") and self.mineru_vllm_api:
-            options.setdefault("server_url", self.mineru_vllm_api.replace("/v1", ""))
 
         result = self.mineru_pipeline_engine.parse(file_path, output_path=str(output_dir), options=options)
 
