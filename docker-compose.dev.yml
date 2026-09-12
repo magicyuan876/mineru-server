@@ -85,6 +85,11 @@ services:
       - MODEL_DOWNLOAD_SOURCE=${MODEL_DOWNLOAD_SOURCE:-auto}
       - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
       - HF_TOKEN=${HF_TOKEN:-}
+      # 模型缓存显式指向宿主机挂载目录（与运行用户/HOME 无关），容器重建后无需重新下载
+      - HF_HOME=/app/models/huggingface_cache
+      - MODELSCOPE_CACHE=/app/models/modelscope_cache
+      # 模型来源：local = 只使用 /app/models 下已挂载的权重，不做联网探测
+      - MINERU_MODEL_SOURCE=${MINERU_MODEL_SOURCE:-local}
     working_dir: /app/backend
     command: >
       sh -c "pip install debugpy -q &&
@@ -160,6 +165,11 @@ services:
       - MODEL_DOWNLOAD_SOURCE=${MODEL_DOWNLOAD_SOURCE:-auto}
       - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
       - HF_TOKEN=${HF_TOKEN:-}
+      # 模型缓存显式指向宿主机挂载目录（与运行用户/HOME 无关），容器重建后无需重新下载
+      - HF_HOME=/app/models/huggingface_cache
+      - MODELSCOPE_CACHE=/app/models/modelscope_cache
+      # 模型来源：local = 只使用 /app/models 下已挂载的权重，不做联网探测
+      - MINERU_MODEL_SOURCE=${MINERU_MODEL_SOURCE:-local}
     working_dir: /app/backend
     command: >
       sh -c "pip install debugpy -q &&

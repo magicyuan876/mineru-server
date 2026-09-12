@@ -312,7 +312,8 @@ class MinerUPipelineEngine:
             if file_ext in [".png", ".jpg", ".jpeg"]:
                 logger.info("🖼️  Converting image to PDF...")
                 try:
-                    pdf_bytes = img2pdf.convert(file_bytes)
+                    # ifvalid：EXIF 方向值非法（如 0）时告警并忽略，而不是直接抛错
+                    pdf_bytes = img2pdf.convert(file_bytes, rotation=img2pdf.Rotation.ifvalid)
                 except Exception as e:
                     raise ValueError(f"Image conversion failed: {e}")
                 safe_file_name = "result.pdf"

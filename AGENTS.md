@@ -201,6 +201,7 @@ npm run build     # tsc && vite build → dist/
 - 后端容器以非 root 用户 `tianshu`（UID 10001）运行，挂载到 `/app/data`、`/app/logs` 的宿主机目录必须对其可写（`setup.sh` 的 `create_directories` 会做 best-effort `chmod`）；Worker 例外，因挂载 `/var/run/docker.sock` 在 compose 中保持 `user: root`。
 - 全新部署必须设置 `TIANSHU_ADMIN_PASSWORD`（可选 `TIANSHU_ADMIN_USERNAME`，默认 admin），否则 API 服务拒绝启动；`setup.sh` 会自动生成随机密码写入 `.env`。
 - 模型权重在 `models/`，运行时数据在 `data/{uploads,output,db}`，日志在 `logs/{backend,worker,mcp}`。
+- 模型一律不落镜像：权重与下载缓存都在宿主机 `models/` 下，重建镜像/容器不会重新下载。容器内通过 `HF_HOME=/app/models/huggingface_cache` 与 `MODELSCOPE_CACHE=/app/models/modelscope_cache` 环境变量定位缓存（与运行用户/HOME 无关，不要在 compose 里挂 `~/.cache` 路径）；`MINERU_MODEL_SOURCE=local` 让 MinerU 只使用 `models-dir` 挂载的权重，不做联网探测。`models/mineru.json` 由 `download_models.py` 每次生成（`model-source: local`，pipeline 路径为仓库根 `/app/models/PDF-Extract-Kit-1.0`——MinerU 3.4+ 的模型相对路径自带 `models/` 前缀，不要指向其 `models/` 子目录）。
 
 ## 代码风格
 

@@ -218,17 +218,24 @@ def generate_mineru_json(output_dir):
 
     MinerU 3.0 配置格式变更:
     - 旧: {"models-dir": "...", "vlm-models-dir": "..."}
-    - 新: {"models-dir": {"pipeline": "...", "vlm": "..."}, "config_version": "1.3.1"}
+    - 新: {"models-dir": {"pipeline": "...", "vlm": "..."}, "model-source": "...", "config_version": "1.3.2"}
+
+    model-source 必须显式写 "local"：缺省时 MinerU 3.4+ 会按旧版配置做原地迁移，
+    把 model-source 写成 huggingface，离线/本地模型部署下解析时会尝试联网下载而失败。
     """
     config_path = Path(output_dir) / "mineru.json"
 
-    # 注意：这里的 paths 是容器内的绝对路径
+    # 注意：这里的 paths 是容器内的绝对路径。
+    # pipeline 必须指向仓库根（不含 models/ 后缀）：MinerU 3.4+ 的模型相对路径
+    # （如 models/MFR/unimernet_hf_small_2503）自带 models/ 前缀，指到子目录会拼出
+    # models/models/... 的双重路径。
     config = {
         "models-dir": {
-            "pipeline": "/app/models/PDF-Extract-Kit-1.0/models",
+            "pipeline": "/app/models/PDF-Extract-Kit-1.0",
             "vlm": "/app/models/MinerU2.5-Pro-2605-1.2B",
         },
-        "config_version": "1.3.1",
+        "model-source": "local",
+        "config_version": "1.3.2",
     }
     try:
         with open(config_path, "w", encoding="utf-8") as f:
