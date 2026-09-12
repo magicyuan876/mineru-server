@@ -566,7 +566,6 @@ async def retry_task(task_id: str, current_user: User = Depends(get_current_acti
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # 🚨 修复属性名称错误
     if not current_user.has_permission(Permission.TASK_DELETE_ALL):
         if task.get("user_id") != current_user.user_id:
             raise HTTPException(status_code=403, detail="Permission denied")
@@ -589,7 +588,6 @@ async def cancel_task_endpoint(task_id: str, current_user: User = Depends(get_cu
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # 🚨 修复属性名称错误
     if not current_user.has_permission(Permission.TASK_DELETE_ALL):
         if task.get("user_id") != current_user.user_id:
             raise HTTPException(status_code=403, detail="Permission denied")
@@ -611,7 +609,6 @@ async def pause_task_endpoint(task_id: str, current_user: User = Depends(get_cur
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # 🚨 修复属性名称错误
     if not current_user.has_permission(Permission.TASK_DELETE_ALL):
         if task.get("user_id") != current_user.user_id:
             raise HTTPException(status_code=403, detail="Permission denied")
@@ -631,7 +628,6 @@ async def resume_task_endpoint(task_id: str, current_user: User = Depends(get_cu
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # 🚨 修复属性名称错误
     if not current_user.has_permission(Permission.TASK_DELETE_ALL):
         if task.get("user_id") != current_user.user_id:
             raise HTTPException(status_code=403, detail="Permission denied")

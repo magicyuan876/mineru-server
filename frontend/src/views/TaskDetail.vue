@@ -12,9 +12,9 @@
 
       <div class="flex items-center gap-3">
         <template v-if="task">
-            <button v-if="['pending', 'processing', 'paused'].includes(task.status)" @click="initiateAction('cancel')" :disabled="actionLoading" class="btn btn-white text-gray-600 border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 btn-sm flex items-center shadow-sm transition-all disabled:opacity-50" title="取消任务（保留任务记录）">
+            <button v-if="['pending', 'processing', 'paused'].includes(task.status)" @click="initiateAction('cancel')" :disabled="actionLoading" class="btn btn-white text-gray-600 border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 btn-sm flex items-center shadow-sm transition-all disabled:opacity-50" :title="$t('task.cancelTaskTip')">
               <XCircle :class="{'animate-pulse': actionLoading && currentAction === 'cancel'}" class="w-4 h-4 mr-1.5" />
-              <span>取消任务</span>
+              <span>{{ $t('task.cancelTask') }}</span>
             </button>
             <button v-if="task.status === 'failed'" @click="initiateAction('retry')" :disabled="actionLoading" class="btn btn-white text-blue-600 border-gray-200 hover:bg-blue-50 btn-sm flex items-center shadow-sm transition-all disabled:opacity-50">
               <RotateCw :class="{'animate-spin': actionLoading && currentAction === 'retry'}" class="w-4 h-4 mr-1.5" />
@@ -334,7 +334,7 @@ function initiateAction(action: 'retry' | 'clearCache' | 'delete' | 'cancel') {
   } else if (action === 'delete') {
     confirmTitle.value = '删除任务'; confirmMessage.value = '彻底删除该任务及文件？不可恢复。'; confirmType.value = 'danger'
   } else if (action === 'cancel') {
-    confirmTitle.value = '取消任务'; confirmMessage.value = '确定取消该任务吗？已产生的处理结果将被保留。'; confirmType.value = 'warning'
+    confirmTitle.value = t('task.cancelTask'); confirmMessage.value = t('task.cancelTaskConfirm'); confirmType.value = 'warning'
   }
   showConfirm.value = true
 }
