@@ -53,6 +53,18 @@
 - ✅ **兼容确认**：`do_parse` API、`vlm/hybrid` 后端名（旧别名 `*-auto-engine` 仍受支持）、pipeline 模型目录结构（PP-DocLayoutV2 等）均保持不变
 - ✅ **macOS 原生支持**：Apple Silicon 自动启用 MPS 加速（`--accelerator mps`），VLM 后端自动走 MLX；音视频辅助引擎在 mac 上回退 CPU
 
+### 2026-09-12 🚀 v2.0.0 稳定版：多模态图片描述、ZIP/EPUB 支持与系统完善
+
+- ✅ **图片描述（多模态大模型）**：解析结果中的图片可自动调用多模态大模型生成内容描述，写回 Markdown 图片 alt 与 JSON 的 img_caption；管理员在系统配置页完成启用与模型配置（OpenAI 兼容接口），支持连接测试与并发控制
+- ✅ **ZIP 压缩包解析**：上传 zip 自动解包为父子任务批量解析（条目数/解压总量限制，防 Zip Slip），结果按条目合并；新增 EPUB 格式支持（MarkItDown）
+- ✅ **邀请码注册**：管理员可在配置页开启注册邀请码，公开注册接口按需校验
+- ✅ **任务取消**：支持取消 pending/processing/paused 状态的任务（PR #83）
+- ✅ **MinerU 3.4.5 升级**：Office 原生解析（DOCX/XLSX/PPTX）、macOS MPS 原生运行支持；引擎聚焦 MinerU，移除 PaddleOCR 引擎
+- ✅ **部署统一**：单一交互式 `setup.sh` 入口（GPU/纯 pipeline/CPU/原生/离线），新增 pipeline-only 编排与离线部署方案
+- ⚡ **性能与稳定性**：SQLite 启用 WAL 模式消除读写互斥；API 端点去阻塞化；Redis 队列与 SQLite 定期对账；子任务单事务批量创建；vLLM 容器按需冷启动
+- 🔒 **安全加固**：认证与密钥强度强制校验、文件服务鉴权与下载防护、对象存储凭据与网络收紧、依赖版本升级等系统性完善（升级前请按文档重新生成 `.env`）
+- 🔧 **修复**：图片 EXIF 方向非法导致解析失败、模型缓存随容器重建丢失、图片源文件预览失败等问题
+
 ### 2026-04-12 🔧 MinerU 3.0.9 升级 & Office 格式增强
 
 - ✅ **MinerU 3.0.9 升级**
